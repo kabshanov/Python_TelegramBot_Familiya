@@ -1,6 +1,7 @@
 # Проект: Telegram-бот с функцией календаря
 # Имя Фамилия — Михаил Кабшанов
-# логин на GitHub — kabshanov
+# Логин на GitHub — kabshanov
+# Telegram - @kabmik
 
 ---
 
