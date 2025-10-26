@@ -1,1 +1,3 @@
-# Python_TelegramBot_Familiya
+Проект: Telegram-бот с функцией календаря
+Имя Фамилия — Михаил Кабшанов
+логин на GitHub — kabshanov
