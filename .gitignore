@@ -1,0 +1,21 @@
+# виртуальное окружение
+venv/
+.venv/
+
+# pycache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE
+.idea/
+.vscode/
+
+# локальные настройки
+.env
+secrets.py
+
+# sqlite (если будет для Django)
+*.sqlite3
+db.sqlite3
