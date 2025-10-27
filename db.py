@@ -1,5 +1,26 @@
+"""
+db.py
+
+Модуль прямой работы с PostgreSQL (psycopg2).
+
+Отвечает за:
+- подключение к базе данных;
+- регистрацию и проверку пользователей;
+- CRUD-операции по событиям календаря.
+
+Слои:
+- Функции user_exists / register_user управляют таблицей users.
+- Класс Calendar инкапсулирует операции с таблицей events.
+
+Важно:
+- Подключение (get_connection) использует autocommit=True, чтобы в учебной
+  среде не ловить подвисшие транзакции.
+- В продакшене autocommit обычно отключают и работают через явные транзакции.
+"""
+
 import logging
 from datetime import datetime
+
 import psycopg2
 from psycopg2 import Error as PGError
 
@@ -8,9 +29,10 @@ logger = logging.getLogger(__name__)
 
 def get_connection():
     """
-    Возвращает подключение к PostgreSQL.
-    В учебной среде включён autocommit, чтобы не зависать в 'прерванной транзакции'.
-    Для продакшена autocommit можно отключить и управлять транзакциями явно.
+    Установить подключение к PostgreSQL и вернуть объект соединения.
+
+    Возвращает:
+        psycopg2.extensions.connection: активное соединение с автокоммитом.
     """
     conn = psycopg2.connect(
         host="localhost",
@@ -24,7 +46,16 @@ def get_connection():
 
 
 def user_exists(conn, tg_user_id: int) -> bool:
-    """Проверяет наличие пользователя в таблице users по Telegram ID."""
+    """
+    Проверить, зарегистрирован ли пользователь с заданным Telegram ID.
+
+    Параметры:
+        conn: psycopg2 connection.
+        tg_user_id (int): Telegram user id.
+
+    Возвращает:
+        bool: True, если пользователь есть в таблице users, иначе False.
+    """
     try:
         cur = conn.cursor()
         cur.execute("SELECT 1 FROM users WHERE tg_user_id = %s;", (tg_user_id,))
@@ -32,15 +63,27 @@ def user_exists(conn, tg_user_id: int) -> bool:
         cur.close()
         logger.info("DB: user_exists tg_user_id=%s -> %s", tg_user_id, exists)
         return exists
-    except PGError as e:
+    except PGError:
         logger.exception("DB: user_exists ошибка tg_user_id=%s", tg_user_id)
         raise
 
 
 def register_user(conn, tg_user_id: int, username: str, first_name: str) -> None:
     """
-    Регистрирует пользователя (upsert по tg_user_id).
-    Требуются права INSERT/UPDATE на users и USAGE/SELECT на users_id_seq (для serial).
+    Зарегистрировать пользователя или обновить его данные (upsert по tg_user_id).
+
+    Параметры:
+        conn: psycopg2 connection.
+        tg_user_id (int): Telegram user id.
+        username (str): username в Telegram.
+        first_name (str): имя (first_name) в Telegram.
+
+    Поведение:
+        INSERT в таблицу users, при конфликте по tg_user_id выполняется UPDATE.
+
+    Требования к БД:
+        - Таблица users с полем tg_user_id уникальным/PRIMARY KEY.
+        - Права INSERT/UPDATE на таблицу users.
     """
     try:
         cur = conn.cursor()
@@ -56,28 +99,71 @@ def register_user(conn, tg_user_id: int, username: str, first_name: str) -> None
         )
         cur.close()
         logger.info("DB: register_user tg_user_id=%s", tg_user_id)
-    except PGError as e:
+    except PGError:
         logger.exception("DB: register_user ошибка tg_user_id=%s", tg_user_id)
         raise
 
 
 class Calendar:
     """
-    Календарь с хранением в PostgreSQL.
-    Таблица events: id, name, date, time, details, user_id.
+    Высокоуровневый интерфейс к событиям календаря (таблица events).
+
+    Методы:
+        create_event(...) -> int
+        read_event(...) -> str | None
+        edit_event(...) -> bool
+        delete_event(...) -> bool
+        display_events(...) -> str
+
+    Таблица events должна иметь поля:
+        id SERIAL PRIMARY KEY,
+        name TEXT/VARCHAR,
+        date DATE,
+        time TIME,
+        details TEXT,
+        user_id BIGINT (Telegram ID владельца).
     """
 
     def __init__(self, conn):
+        """
+        Инициализировать Calendar с уже установленным соединением.
+        """
         self.conn = conn
         logger.info("Calendar: инициализировано подключение к БД.")
 
-    def create_event(self, user_id: int, name: str, date_str: str, time_str: str, details: str) -> int:
-        """Создаёт событие пользователя и возвращает его ID."""
+    def create_event(
+        self,
+        user_id: int,
+        name: str,
+        date_str: str,
+        time_str: str,
+        details: str,
+    ) -> int:
+        """
+        Создать новое событие во владении user_id.
+
+        Параметры:
+            user_id (int): Telegram ID владельца события.
+            name (str): название события.
+            date_str (str): дата в формате 'ГГГГ-ММ-ДД'.
+            time_str (str): время в формате 'ЧЧ:ММ'.
+            details (str): произвольное описание.
+
+        Возвращает:
+            int: ID вставленной записи (events.id).
+
+        Исключения:
+            ValueError: если формат даты/времени неверный.
+            PGError: внутренняя ошибка PostgreSQL.
+        """
         try:
             datetime.strptime(date_str, "%Y-%m-%d")
             datetime.strptime(time_str, "%H:%M")
         except ValueError:
-            raise ValueError("Дата должна быть в формате ГГГГ-ММ-ДД, время — ЧЧ:ММ.")
+            raise ValueError(
+                "Дата должна быть в формате ГГГГ-ММ-ДД, "
+                "время — ЧЧ:ММ."
+            )
 
         try:
             cur = self.conn.cursor()
@@ -98,7 +184,17 @@ class Calendar:
             raise
 
     def read_event(self, user_id: int, event_id: int):
-        """Возвращает строку с описанием события пользователя или None."""
+        """
+        Получить текстовое описание события пользователя.
+
+        Параметры:
+            user_id (int): Telegram ID владельца.
+            event_id (int): ID события в таблице events.
+
+        Возвращает:
+            str | None: форматированное описание события или None,
+                        если событие не найдено/не принадлежит.
+        """
         try:
             cur = self.conn.cursor()
             cur.execute(
@@ -111,7 +207,12 @@ class Calendar:
             )
             row = cur.fetchone()
             cur.close()
-            logger.info("DB: read_event user_id=%s id=%s found=%s", user_id, event_id, bool(row))
+            logger.info(
+                "DB: read_event user_id=%s id=%s found=%s",
+                user_id,
+                event_id,
+                bool(row),
+            )
             if not row:
                 return None
             eid, name, date_val, time_val, details = row
@@ -122,11 +223,25 @@ class Calendar:
                 f"Описание: {details or ''}"
             )
         except PGError:
-            logger.exception("DB: read_event ошибка user_id=%s id=%s", user_id, event_id)
+            logger.exception(
+                "DB: read_event ошибка user_id=%s id=%s",
+                user_id,
+                event_id,
+            )
             raise
 
     def edit_event(self, user_id: int, event_id: int, new_details: str) -> bool:
-        """Обновляет описание события пользователя."""
+        """
+        Обновить описание (details) события пользователя.
+
+        Параметры:
+            user_id (int): Telegram ID владельца.
+            event_id (int): ID события.
+            new_details (str): новый текст.
+
+        Возвращает:
+            bool: True, если обновили хотя бы одну строку.
+        """
         try:
             cur = self.conn.cursor()
             cur.execute(
@@ -139,14 +254,32 @@ class Calendar:
             )
             updated = cur.rowcount > 0
             cur.close()
-            logger.info("DB: edit_event user_id=%s id=%s updated=%s", user_id, event_id, updated)
+            logger.info(
+                "DB: edit_event user_id=%s id=%s updated=%s",
+                user_id,
+                event_id,
+                updated,
+            )
             return updated
         except PGError:
-            logger.exception("DB: edit_event ошибка user_id=%s id=%s", user_id, event_id)
+            logger.exception(
+                "DB: edit_event ошибка user_id=%s id=%s",
+                user_id,
+                event_id,
+            )
             raise
 
     def delete_event(self, user_id: int, event_id: int) -> bool:
-        """Удаляет событие пользователя."""
+        """
+        Удалить событие пользователя.
+
+        Параметры:
+            user_id (int): Telegram ID владельца.
+            event_id (int): ID события.
+
+        Возвращает:
+            bool: True, если строка была удалена.
+        """
         try:
             cur = self.conn.cursor()
             cur.execute(
@@ -155,14 +288,33 @@ class Calendar:
             )
             deleted = cur.rowcount > 0
             cur.close()
-            logger.info("DB: delete_event user_id=%s id=%s deleted=%s", user_id, event_id, deleted)
+            logger.info(
+                "DB: delete_event user_id=%s id=%s deleted=%s",
+                user_id,
+                event_id,
+                deleted,
+            )
             return deleted
         except PGError:
-            logger.exception("DB: delete_event ошибка user_id=%s id=%s", user_id, event_id)
+            logger.exception(
+                "DB: delete_event ошибка user_id=%s id=%s",
+                user_id,
+                event_id,
+            )
             raise
 
     def display_events(self, user_id: int) -> str:
-        """Возвращает отсортированный список событий пользователя."""
+        """
+        Получить краткий список событий пользователя, отсортированный
+        по дате и времени.
+
+        Параметры:
+            user_id (int): Telegram ID владельца.
+
+        Возвращает:
+            str: человекочитаемый список событий
+                 или "Событий пока нет." если пусто.
+        """
         try:
             cur = self.conn.cursor()
             cur.execute(
@@ -176,13 +328,22 @@ class Calendar:
             )
             rows = cur.fetchall()
             cur.close()
-            logger.info("DB: display_events user_id=%s count=%s", user_id, len(rows))
+            logger.info(
+                "DB: display_events user_id=%s count=%s",
+                user_id,
+                len(rows),
+            )
             if not rows:
                 return "Событий пока нет."
+
             lines = ["Список событий:"]
-            for eid, name, d, t in rows:
-                lines.append(f"ID: {eid} | {d} {t} | {name}")
+            for eid, name, date_val, time_val in rows:
+                lines.append(f"ID: {eid} | {date_val} {time_val} | {name}")
             return "\n".join(lines)
+
         except PGError:
-            logger.exception("DB: display_events ошибка user_id=%s", user_id)
+            logger.exception(
+                "DB: display_events ошибка user_id=%s",
+                user_id,
+            )
             raise
