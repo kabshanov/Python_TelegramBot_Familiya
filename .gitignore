@@ -14,8 +14,11 @@ __pycache__/
 
 # локальные настройки
 .env
-secrets.py
+bot_secrets.py
 *.txt
+Работа с Git.md
+Работа с Git в PyCharm.md
+Работа с GitHub.md
 
 # sqlite (если будет для Django)
 *.sqlite3

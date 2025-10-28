@@ -347,3 +347,29 @@ class Calendar:
                 user_id,
             )
             raise
+
+def get_event_by_id(conn, event_id: int):
+    """
+    Получить событие из таблицы events по id.
+    Возвращает dict или None.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, name, date, time, details, user_id
+            FROM events
+            WHERE id = %s
+            """,
+            (event_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "name": row[1],
+            "date": row[2],   # date
+            "time": row[3],   # time
+            "details": row[4],
+            "user_id": row[5],
+        }

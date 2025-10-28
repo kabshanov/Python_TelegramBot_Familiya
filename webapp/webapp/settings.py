@@ -1,14 +1,40 @@
+"""
+settings.py
+============
+
+Глобальные настройки Django-проекта **Calendar WebApp**.
+
+Назначение:
+- определяет конфигурацию Django (БД, middleware, приложения и др.);
+- связывает веб-часть (админку, REST API) с Telegram-ботом через общую БД;
+- используется при запуске как через `manage.py`, так и при WSGI-развёртывании.
+
+Примечание:
+Файл настроек предназначен для режима разработки (DEBUG=True).
+Для продакшена рекомендуется вынести ключи и пароли в переменные окружения.
+"""
+
 import os
 from pathlib import Path
 
+
+# ---------------------------------------------------------------------------
+# Базовая конфигурация проекта
+# ---------------------------------------------------------------------------
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = "dev-secret-key-change-this"
+SECRET_KEY = "dev-secret-key-change-this"  # заменить для продакшена
 DEBUG = True
-
 ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 
+
+# ---------------------------------------------------------------------------
+# Приложения (Django apps)
+# ---------------------------------------------------------------------------
+
 INSTALLED_APPS = [
+    # --- системные приложения Django ---
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -16,10 +42,17 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
 
-    "calendarapp",
+    # --- кастомные приложения проекта ---
+    "calendarapp",   # календарь, события, встречи
 
-    "rest_framework",
+    # --- сторонние библиотеки ---
+    "rest_framework",  # для будущего REST API
 ]
+
+
+# ---------------------------------------------------------------------------
+# Middleware
+# ---------------------------------------------------------------------------
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -31,12 +64,17 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
+
+# ---------------------------------------------------------------------------
+# URL / Templates / WSGI
+# ---------------------------------------------------------------------------
+
 ROOT_URLCONF = "webapp.urls"
 
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        "DIRS": [],  # при необходимости можно добавить путь к шаблонам
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -51,7 +89,11 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "webapp.wsgi.application"
 
-# БД: Postgres, не sqlite
+
+# ---------------------------------------------------------------------------
+# База данных
+# ---------------------------------------------------------------------------
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
@@ -63,6 +105,11 @@ DATABASES = {
     }
 }
 
+
+# ---------------------------------------------------------------------------
+# Аутентификация и безопасность
+# ---------------------------------------------------------------------------
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -70,13 +117,28 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+
+# ---------------------------------------------------------------------------
+# Локализация и время
+# ---------------------------------------------------------------------------
+
 LANGUAGE_CODE = "ru-ru"
 TIME_ZONE = "Europe/Moscow"
 
 USE_I18N = True
-USE_TZ = True  # оставим True, пусть хранит во внутреннем UTC
+USE_TZ = True  # хранение в UTC, отображение в локальном времени
+
+
+# ---------------------------------------------------------------------------
+# Статика
+# ---------------------------------------------------------------------------
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+
+# ---------------------------------------------------------------------------
+# Прочее
+# ---------------------------------------------------------------------------
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

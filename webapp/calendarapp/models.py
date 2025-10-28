@@ -1,25 +1,48 @@
-from django.db import models
+"""
+models.py
+=========
 
+ORM-модели приложения `calendarapp`.
+
+Содержит три ключевые сущности:
+
+1. **Event** — событие календаря, созданное пользователем телеграм-бота.  
+   - Таблица `events` создаётся и заполняется ботом напрямую через psycopg2.  
+   - Django использует модель только для чтения и отображения данных.  
+
+2. **BotStatistics** — суточная статистика активности бота.  
+   - Создаётся и мигрируется Django.  
+   - Содержит агрегированные показатели за день.  
+
+3. **Appointment** — встреча между пользователями (организатор ↔ участник).  
+   - Ссылается на `Event`, но без внешнего ключа в БД (db_constraint=False).  
+   - Управляется Django ORM.  
+
+Назначение модуля — связать данные телеграм-бота и Django-админку в единую систему.
+"""
+
+from django.db import models
+from django.db.models import Q
+
+
+# ---------------------------------------------------------------------------
+# Event — события календаря
+# ---------------------------------------------------------------------------
 
 class Event(models.Model):
     """
     Событие календаря, созданное пользователем бота.
 
-    Эта модель привязана к существующей таблице 'events', в которую
-    пишет сам телеграм-бот через psycopg2 (db.Calendar.create_event и т.д.).
+    Модель отображает таблицу `events`, заполняемую телеграм-ботом напрямую
+    (через psycopg2). Django её не мигрирует.
 
-    Таблица 'events' в базе ожидается примерно такой:
+    Структура таблицы ожидается примерно такой:
         id SERIAL PRIMARY KEY
         name TEXT/VARCHAR
         date DATE
         time TIME
         details TEXT
         user_id BIGINT  -- Telegram ID владельца события
-
-    Мы говорим Django:
-    - не управлять миграциями этой таблицы (managed = False)
-    - использовать имя таблицы events (db_table = "events")
-    - мэппить поле tg_user_id на столбец user_id
     """
 
     id = models.BigAutoField(
@@ -53,25 +76,28 @@ class Event(models.Model):
     )
 
     class Meta:
-        managed = False               # Django не создаёт/не мигрирует эту таблицу
-        db_table = "events"           # использовать уже существующую таблицу
+        managed = False                # Django не создаёт и не мигрирует таблицу
+        db_table = "events"
         verbose_name = "Событие"
         verbose_name_plural = "События"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.name} @ {self.date} {self.time}"
 
+
+# ---------------------------------------------------------------------------
+# BotStatistics — суточная активность бота
+# ---------------------------------------------------------------------------
 
 class BotStatistics(models.Model):
     """
     Суточная статистика активности бота.
 
-    Эту таблицу мы создавали через Django миграции (calendarapp_botstatistics).
-    В неё бот пишет данные через ORM (bot.py):
-    - user_count        (сколько новых пользователей за день)
-    - event_count       (сколько создано событий)
-    - edited_events     (сколько событий отредактировали)
-    - cancelled_events  (сколько удалили)
+    В эту таблицу Django ORM пишет ежедневные агрегаты:
+    - user_count        — новых пользователей за день;
+    - event_count       — созданных событий;
+    - edited_events     — отредактированных событий;
+    - cancelled_events  — удалённых событий.
     """
 
     date = models.DateField(
@@ -100,5 +126,79 @@ class BotStatistics(models.Model):
         verbose_name = "Статистика бота"
         verbose_name_plural = "Статистика бота"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"Статистика {self.date}"
+
+
+# ---------------------------------------------------------------------------
+# Appointment — встречи между пользователями
+# ---------------------------------------------------------------------------
+
+class Appointment(models.Model):
+    """
+    Встреча между организатором и участником.
+
+    Ссылается на таблицу `events` (через модель Event), но без ограничения
+    внешнего ключа в БД, чтобы не ломать связь с ботом. Проверки целостности
+    выполняются прикладным кодом.
+    """
+
+    class Status(models.TextChoices):
+        """Возможные статусы встречи."""
+        PENDING = "pending", "Ожидает подтверждения"
+        CONFIRMED = "confirmed", "Подтверждено"
+        CANCELLED = "cancelled", "Отменено"
+        DECLINED = "declined", "Отклонено"
+
+    event = models.ForeignKey(
+        "calendarapp.Event",
+        on_delete=models.DO_NOTHING,
+        null=True,
+        blank=True,
+        db_constraint=False,
+        db_column="event_id",
+        verbose_name="Событие",
+    )
+    organizer_tg_id = models.BigIntegerField("Организатор (TG ID)", db_index=True)
+    participant_tg_id = models.BigIntegerField("Участник (TG ID)", db_index=True)
+
+    date = models.DateField("Дата")
+    time = models.TimeField("Время")
+    details = models.TextField("Детали", blank=True, default="")
+
+    status = models.CharField(
+        "Статус",
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
+    updated_at = models.DateTimeField("Обновлено", auto_now=True)
+
+    class Meta:
+        verbose_name = "Встреча"
+        verbose_name_plural = "Встречи"
+        ordering = ["-date", "-time", "-id"]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.date} {self.time} "
+            f"[{self.get_status_display()}] "
+            f"{self.organizer_tg_id} → {self.participant_tg_id}"
+        )
+
+    @staticmethod
+    def user_busy_q(tg_user_id: int) -> Q:
+        """
+        Q-условие для выборки встреч, которые занимают время пользователя.
+
+        Занятыми считаются встречи со статусами `pending` и `confirmed`.
+
+        :param tg_user_id: Telegram-ID пользователя
+        :return: объект django.db.models.Q для фильтрации QuerySet
+        """
+        return (
+            Q(organizer_tg_id=tg_user_id) | Q(participant_tg_id=tg_user_id)
+        ) & Q(status__in=[Appointment.Status.PENDING, Appointment.Status.CONFIRMED])
