@@ -9,11 +9,14 @@ tgapp.core
 """
 
 from __future__ import annotations
+from typing import Optional
 
 import logging
 import os
 import sys
 from datetime import datetime
+from django.db.models import F
+from telegram import Update
 
 import django
 
@@ -29,7 +32,7 @@ django.setup()
 
 # Теперь можно импортировать Django-модели
 from django.db import transaction  # noqa: E402
-from calendarapp.models import BotStatistics  # noqa: E402
+from calendarapp.models import BotStatistics, TgUser  # noqa: E402
 
 from telegram import BotCommand, ReplyKeyboardMarkup, ReplyKeyboardRemove  # noqa: E402
 
@@ -55,6 +58,11 @@ CALENDAR = Calendar(CONN)
 # --- Общая клавиатура «Отмена» для диалогов ---
 CANCEL_KB = ReplyKeyboardMarkup([["Отмена"]], resize_keyboard=True, one_time_keyboard=True)
 
+
+def ensure_profile_from_update(update: Update) -> None:
+    """Гарантирует существование профиля TgUser на основе Telegram-пользователя."""
+    u = update.effective_user
+    ensure_tg_user(u.id, u.username, u.first_name, u.last_name)
 
 # ========== Статистика (BotStatistics) ==========
 
@@ -108,6 +116,53 @@ def track_event_cancelled() -> None:
     logger.info("STAT: cancelled_events +=1")
 
 
+# ========== функции: завести пользователя + инкремент счётчиков ==========
+
+def ensure_tg_user(tg_id: int,
+                   username: Optional[str],
+                   first_name: Optional[str],
+                   last_name: Optional[str]) -> TgUser:
+    """
+    Создать/обновить TgUser на основе данных из Telegram Update.
+    Возвращает объект пользователя.
+    """
+    obj, created = TgUser.objects.get_or_create(
+        tg_id=tg_id,
+        defaults={
+            "username": username or "",
+            "first_name": first_name or "",
+            "last_name": last_name or "",
+            "is_active": True,
+        },
+    )
+    # легкий upsert по изменившимся полям
+    changed = False
+    for field, new_val in {
+        "username": username or "",
+        "first_name": first_name or "",
+        "last_name": last_name or "",
+    }.items():
+        if getattr(obj, field) != new_val:
+            setattr(obj, field, new_val)
+            changed = True
+    if changed:
+        obj.save(update_fields=["username", "first_name", "last_name", "updated_at"])
+    logger.info("ensure_tg_user: tg_id=%s created=%s", tg_id, created)
+    return obj
+
+
+def track_user_event_created(tg_id: int) -> None:
+    TgUser.objects.filter(tg_id=tg_id).update(events_created=F("events_created") + 1)
+
+
+def track_user_event_edited(tg_id: int) -> None:
+    TgUser.objects.filter(tg_id=tg_id).update(events_edited=F("events_edited") + 1)
+
+
+def track_user_event_cancelled(tg_id: int) -> None:
+    TgUser.objects.filter(tg_id=tg_id).update(events_cancelled=F("events_cancelled") + 1)
+
+
 # ========== Общие утилиты ==========
 
 def setup_bot_commands(bot) -> None:
@@ -116,6 +171,8 @@ def setup_bot_commands(bot) -> None:
         BotCommand("start", "Справка и команды"),
         BotCommand("help", "Справка"),
         BotCommand("register", "Регистрация"),
+        BotCommand("login", "Привязать Telegram-аккаунт к системе"),  # <— добавь
+        BotCommand("calendar", "Показать мой календарь"),  # <— добавь
         BotCommand("create_event", "Создать событие (диалог)"),
         BotCommand("display_events", "Показать мои события"),
         BotCommand("read_event", "Показать событие по ID"),
@@ -124,6 +181,7 @@ def setup_bot_commands(bot) -> None:
         BotCommand("cancel", "Отменить текущую операцию"),
         BotCommand("invite", "Пригласить на встречу (/invite <tg_id> <event_id> [текст])"),
     ]
+
     bot.set_my_commands(commands)
     logger.info("TG меню команд установлено (%d шт.)", len(commands))
 

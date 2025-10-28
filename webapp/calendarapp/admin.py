@@ -16,9 +16,47 @@ admin.py
 Упростить работу администратора при просмотре и управлении событиями,
 встречами и метриками бота.
 """
+from __future__ import annotations
 
 from django.contrib import admin
-from .models import Event, BotStatistics, Appointment
+from .models import TgUser, Event, BotStatistics, Appointment
+
+
+class EventInline(admin.TabularInline):
+    """
+    Read-only inline событий пользователя.
+    Работает, потому что Event.user — FK на TgUser (без жёсткого ограничения в БД).
+    """
+    model = Event
+    fields = ("id", "name", "date", "time", "details")
+    readonly_fields = fields
+    extra = 0
+    can_delete = False
+    show_change_link = True
+
+    def has_add_permission(self, request, obj=None) -> bool:  # type: ignore[override]
+        return False
+
+
+@admin.register(TgUser)
+class TgUserAdmin(admin.ModelAdmin):
+    """
+    «Личный кабинет» пользователя в админке:
+    карточка пользователя + его события + суммарные счётчики.
+    """
+    list_display = (
+        "tg_id", "username", "first_name", "last_name",
+        "events_total", "events_created", "events_edited", "events_cancelled",
+        "is_active", "created_at",
+    )
+    search_fields = ("tg_id", "username", "first_name", "last_name")
+    list_filter = ("is_active",)
+    readonly_fields = ("created_at", "updated_at")
+    inlines = [EventInline]
+
+    @admin.display(description="Событий (всего)")
+    def events_total(self, obj: TgUser) -> int:
+        return obj.events.count()  # reverse related_name=events из Event
 
 
 @admin.register(Event)

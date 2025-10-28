@@ -22,12 +22,18 @@ from typing import List, Tuple, Optional
 from django.db import transaction
 from django.db.models import Q
 
-from .models import Appointment, Event
+from .models import Appointment, Event, TgUser
 
 
 # ---------------------------------------------------------------------------
 # Занятость пользователей
 # ---------------------------------------------------------------------------
+def get_user_events_qs(tg_user_id: int):
+    """
+    Вернуть QuerySet событий конкретного пользователя по его Telegram ID.
+    """
+    return Event.objects.filter(user_id=tg_user_id).order_by("date", "time")
+
 
 def get_user_busy_slots(
     tg_user_id: int,

@@ -20,6 +20,7 @@ ORM-модели приложения `calendarapp`.
 
 Назначение модуля — связать данные телеграм-бота и Django-админку в единую систему.
 """
+from __future__ import annotations
 
 from django.db import models
 from django.db.models import Q
@@ -29,60 +30,75 @@ from django.db.models import Q
 # Event — события календаря
 # ---------------------------------------------------------------------------
 
+class TgUser(models.Model):
+    """
+    Пользователь Телеграм в системе.
+    Используем tg_id как первичный ключ, чтобы быстро искать и связывать события.
+    Здесь же считаем личные счётчики активности (создано/редактировано/удалено).
+    """
+    tg_id = models.BigIntegerField(primary_key=True, verbose_name="Telegram ID")
+    username = models.CharField("Username", max_length=255, blank=True, default="")
+    first_name = models.CharField("Имя", max_length=255, blank=True, default="")
+    last_name = models.CharField("Фамилия", max_length=255, blank=True, default="")
+    is_active = models.BooleanField("Активен", default=True)
+
+    # личные счётчики активности
+    events_created = models.PositiveIntegerField("Создано событий (всего)", default=0)
+    events_edited = models.PositiveIntegerField("Отредактировано событий (всего)", default=0)
+    events_cancelled = models.PositiveIntegerField("Отменено событий (всего)", default=0)
+
+    created_at = models.DateTimeField("Создан", auto_now_add=True)
+    updated_at = models.DateTimeField("Обновлён", auto_now=True)
+
+    class Meta:
+        db_table = "tg_users"
+        verbose_name = "Пользователь TG"
+        verbose_name_plural = "Пользователи TG"
+
+    def __str__(self) -> str:
+        base = self.username or f"{self.first_name} {self.last_name}".strip() or "без имени"
+        return f"{base} ({self.tg_id})"
+
+
 class Event(models.Model):
     """
     Событие календаря, созданное пользователем бота.
 
-    Модель отображает таблицу `events`, заполняемую телеграм-ботом напрямую
-    (через psycopg2). Django её не мигрирует.
+    ВНИМАНИЕ: это уже существующая таблица 'events', которую пишет бот через psycopg2.
+    Django её НЕ мигрирует (managed=False). Мы лишь описываем схему для чтения/админки.
 
-    Структура таблицы ожидается примерно такой:
-        id SERIAL PRIMARY KEY
-        name TEXT/VARCHAR
-        date DATE
-        time TIME
-        details TEXT
-        user_id BIGINT  -- Telegram ID владельца события
+    Добавили FK на TgUser по колонке user_id (db_constraint=False — чтобы не требовать FK в БД).
     """
+    id = models.BigAutoField(primary_key=True, db_column="id", verbose_name="ID события")
 
-    id = models.BigAutoField(
-        primary_key=True,
-        db_column="id",
-        verbose_name="ID события",
-    )
-    name = models.CharField(
-        "Название события",
-        max_length=255,
-        db_column="name",
-    )
-    date = models.DateField(
-        "Дата",
-        db_column="date",
-    )
-    time = models.TimeField(
-        "Время",
-        db_column="time",
-    )
-    details = models.TextField(
-        "Описание",
-        blank=True,
-        default="",
-        db_column="details",
-    )
-    tg_user_id = models.BigIntegerField(
-        "ID пользователя Telegram",
+    user = models.ForeignKey(
+        "calendarapp.TgUser",
+        to_field="tg_id",
         db_column="user_id",
-        help_text="ID владельца события в Telegram",
+        on_delete=models.DO_NOTHING,
+        db_constraint=False,
+        related_name="events",
+        verbose_name="Пользователь (TG)",
     )
+
+    name = models.CharField("Название события", max_length=255, db_column="name")
+    date = models.DateField("Дата", db_column="date")
+    time = models.TimeField("Время", db_column="time")
+    details = models.TextField("Описание", blank=True, default="", db_column="details")
 
     class Meta:
-        managed = False                # Django не создаёт и не мигрирует таблицу
+        managed = False
         db_table = "events"
         verbose_name = "Событие"
         verbose_name_plural = "События"
 
     def __str__(self) -> str:
         return f"{self.name} @ {self.date} {self.time}"
+
+    @property
+    def tg_user_id(self) -> int:
+        """Сырой TG ID владельца (значение в колонке user_id)."""
+        return self.user_id
 
 
 # ---------------------------------------------------------------------------

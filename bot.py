@@ -93,6 +93,10 @@ def main() -> None:
     # --- Ошибки ---
     dispatcher.add_error_handler(error_handler)
 
+    # --- Профиль и календарь ---
+    dispatcher.add_handler(CommandHandler("login", ev.login_command))
+    dispatcher.add_handler(CommandHandler("calendar", ev.calendar_command))
+
     # --- Запуск ---
     updater.start_polling()
     logger.info("BOT запущен: FSM, статистика, PostgreSQL, Django ORM активны.")
