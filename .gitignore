@@ -19,6 +19,7 @@ bot_secrets.py
 Работа с Git.md
 Работа с Git в PyCharm.md
 Работа с GitHub.md
+Работа с новыми ветками.md
 
 # sqlite (если будет для Django)
 *.sqlite3

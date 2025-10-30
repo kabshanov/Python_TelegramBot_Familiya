@@ -67,9 +67,9 @@ class EventAdmin(admin.ModelAdmin):
     Отображает базовую информацию о событиях пользователей
     (название, дата, время, tg_id создателя).
     """
-    list_display = ("id", "name", "date", "time", "tg_user_id")
-    list_filter = ("date",)
-    search_fields = ("name", "details", "tg_user_id")
+    list_display = ("id", "name", "date", "time", "tg_user_id", "is_public")
+    list_filter = ("date", "is_public")
+    search_fields = ("name", "details")
 
 
 @admin.register(BotStatistics)

@@ -30,6 +30,11 @@ class FSMState(TypedDict, total=False):
     step: Optional[str]
     data: Dict[str, Any]
 
+# --- SHARE (публикация события) ---------------------------------------------
+FLOW_SHARE = "SHARE"
+STATE_SHARE_WAIT_EVENT_ID = "SHARE_WAIT_EVENT_ID"
+STATE_SHARE_WAIT_VISIBILITY = "STATE_SHARE_WAIT_VISIBILITY"
+
 
 # Хранилище состояний для всех пользователей (in-memory).
 _USER_STATES: Dict[int, FSMState] = {}

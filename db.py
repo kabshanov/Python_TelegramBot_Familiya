@@ -373,3 +373,65 @@ def get_event_by_id(conn, event_id: int):
             "details": row[4],
             "user_id": row[5],
         }
+
+# --- ПУБЛИЧНЫЕ СОБЫТИЯ / ШЕРИНГ ---------------------------------------------
+
+def ensure_is_public_column(conn) -> None:
+    """
+    Гарантирует наличие колонки is_public в таблице events.
+    БЕЗОПАСНО вызывается много раз (IF NOT EXISTS).
+    """
+    with conn, conn.cursor() as cur:
+        cur.execute("""
+            ALTER TABLE IF EXISTS events
+            ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE
+        """)
+        # Полезный индекс для выборок "мои публичные"
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_events_user_public
+            ON events(user_id, is_public)
+        """)
+
+
+def set_event_visibility(conn, *, owner_tg_id: int, event_id: int, is_public: bool) -> bool:
+    """
+    Установить видимость события (public/private) ТОЛЬКО для владельца.
+    Возврат: True если обновили 1 строку, иначе False.
+    """
+    with conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE events
+               SET is_public = %s
+             WHERE id = %s AND user_id = %s
+         RETURNING id
+            """,
+            (is_public, event_id, owner_tg_id),
+        )
+        return cur.fetchone() is not None
+
+
+def list_public_events_by_owner(conn, *, owner_tg_id: int):
+    """
+    Список публичных событий конкретного владельца.
+    Возвращает list[tuple]: (id, name, date, time, details).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, name, date, time, details
+              FROM events
+             WHERE user_id = %s AND is_public = TRUE
+          ORDER BY date, time, id
+            """,
+            (owner_tg_id,),
+        )
+        return cur.fetchall()
+
+
+def list_my_public_events(conn, *, tg_user_id: int):
+    """
+    Список публичных событий текущего пользователя.
+    Возвращает list[tuple]: (id, name, date, time, details).
+    """
+    return list_public_events_by_owner(conn, owner_tg_id=tg_user_id)

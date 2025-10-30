@@ -14,7 +14,7 @@ bot.py
 
 Архитектура:
 - FSM и бизнес-логика событий/встреч находятся в пакете `tgapp`;
-- Django-часть (модели, ORM) подключается автоматически при импорте;
+- Django-часть (модели, ORM) подключается через webapp (настроено ранее);
 - bot.py отвечает только за сборку и запуск Telegram-уровня.
 """
 
@@ -25,14 +25,15 @@ from telegram.ext import (
     Updater,
     CommandHandler,
     MessageHandler,
-    Filters,
-    CallbackQueryHandler,
+    Filters
 )
 
 import bot_secrets  # содержит API_TOKEN
 from tgapp.core import setup_bot_commands, logger
 from tgapp import handlers_events as ev
 from tgapp import handlers_appointments as appt
+from db import get_connection, ensure_is_public_column
+from telegram.ext import CallbackQueryHandler
 
 
 # ---------------------------------------------------------------------------
@@ -57,17 +58,20 @@ def main() -> None:
     """
     Инициализация и запуск Telegram-бота.
 
-    1. Создаёт Updater и Dispatcher.
-    2. Регистрирует все хендлеры команд, сообщений и callback-кнопок.
-    3. Запускает polling-цикл до прерывания пользователем (Ctrl-C).
-
-    Использует токен из файла `bot_secrets.py`.
+    1) Проводит подготовку схемы БД для публичных событий (Task 5).
+    2) Создаёт Updater и Dispatcher.
+    3) Регистрирует все хендлеры команд, сообщений и callback-кнопок.
+    4) Запускает polling-цикл до прерывания пользователем (Ctrl-C).
     """
-    # Инициализация Updater / Dispatcher
+    # 1) Гарантируем наличие колонки is_public в таблице events (вызов безопасен)
+    conn = get_connection()
+    ensure_is_public_column(conn)
+
+    # 2) Инициализация Updater / Dispatcher
     updater = Updater(token=bot_secrets.API_TOKEN, use_context=True)
     dispatcher = updater.dispatcher
 
-    # Настройка меню /help
+    # Меню /help
     setup_bot_commands(updater.bot)
 
     # --- Базовые команды ---
@@ -76,16 +80,26 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("register", ev.register_command))
     dispatcher.add_handler(CommandHandler("cancel", ev.cancel_command))
 
-    # --- События ---
+    # --- События (CRUD) ---
     dispatcher.add_handler(CommandHandler("display_events", ev.display_events_handler))
     dispatcher.add_handler(CommandHandler("read_event", ev.read_event_handler))
     dispatcher.add_handler(CommandHandler("create_event", ev.create_event_start))
     dispatcher.add_handler(CommandHandler("edit_event", ev.edit_event_start_or_inline))
     dispatcher.add_handler(CommandHandler("delete_event", ev.delete_event_start_or_inline))
 
+    # --- Публичные события (Task 5) ---
+    dispatcher.add_handler(CommandHandler("share_event", ev.share_event_start))
+    dispatcher.add_handler(CommandHandler("my_public", ev.list_my_public_command))
+    dispatcher.add_handler(CommandHandler("public_of", ev.public_of_start))  # FSM-версия
+    dispatcher.add_handler(CallbackQueryHandler(ev.fsm_cancel_callback, pattern=r"^fsm:cancel$"))
+
     # --- Встречи и приглашения ---
     dispatcher.add_handler(CommandHandler("invite", appt.invite_start))
     dispatcher.add_handler(CallbackQueryHandler(appt.appointment_decision_handler, pattern=r"^appt:"))
+
+    # --- Профиль и календарь ---
+    dispatcher.add_handler(CommandHandler("login", ev.login_command))
+    dispatcher.add_handler(CommandHandler("calendar", ev.calendar_command))
 
     # --- FSM-тексты (не команды) ---
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, ev.text_router))
@@ -93,13 +107,9 @@ def main() -> None:
     # --- Ошибки ---
     dispatcher.add_error_handler(error_handler)
 
-    # --- Профиль и календарь ---
-    dispatcher.add_handler(CommandHandler("login", ev.login_command))
-    dispatcher.add_handler(CommandHandler("calendar", ev.calendar_command))
-
     # --- Запуск ---
     updater.start_polling()
-    logger.info("BOT запущен: FSM, статистика, PostgreSQL, Django ORM активны.")
+    logger.info("BOT запущен: FSM, встречи, статистика, публичные события, PostgreSQL, Django ORM активны.")
     updater.idle()
 
 

@@ -2,8 +2,8 @@
 tgapp.handlers_events
 =====================
 
-Обработчики команд бота и FSM по событиям (CRUD), плюс логин и вывод личного
-календаря.
+Обработчики команд бота и FSM по событиям (CRUD), логин/календарь,
+а также шерингу (публикация) событий и запросу публичных событий других пользователей.
 
 Команды:
 - /start, /help, /register, /cancel
@@ -12,49 +12,74 @@ tgapp.handlers_events
 - /read_event <id>           — показать одно событие
 - /edit_event [id msg]       — изменить описание (inline или FSM)
 - /delete_event [id]         — удалить событие (inline или FSM)
-- /login                     — привязать Telegram-аккаунт к Django-модели TgUser
-- /calendar                  — показать личный календарь (через ORM)
+- /login                     — привязать Telegram-аккаунт к Django-профилю TgUser
+- /calendar                  — показать личный календарь (ORM)
+
+Публичные события (Task 5):
+- /share_event               — FSM-диалог публикации/скрытия события
+- /my_public                 — список моих публичных событий
+- /public_of                 — FSM-диалог: спросить tg_id → показать публичные события пользователя
 
 FSM-потоки:
 - CREATE: WAIT_NAME -> WAIT_DATE -> WAIT_TIME -> WAIT_DETAILS
 - EDIT:   WAIT_ID   -> WAIT_NEW_DETAILS
 - DELETE: WAIT_ID
-- INVITE: FSM-приглашений живёт в tgapp.handlers_appointments (роутим сюда)
+- INVITE: FSM приглашений живёт в tgapp.handlers_appointments (роут из text_router)
+- SHARE:  SHARE_WAIT_EVENT_ID -> SHARE_WAIT_VISIBILITY
+- PUBLIC_OF: PUBLIC_WAIT_TG_ID
 
-Поведение:
-- Все пользовательские действия вызывают ensure_profile_from_update(...) —
-  профиль TgUser всегда существует (иначе инкременты некуда писать).
-- Создание/редактирование/удаление — только для владельца события.
-- В любой момент "Отмена" — сброс FSM и клавиатуры.
+Правила доступа:
+- CRUD над событиями — только владелец.
+- Публиковать/скрывать — только владелец.
 
 Зависимости:
 - CALENDAR (низкоуровневый слой работы с таблицей events, psycopg2)
-- TgUser/счётчики и BotStatistics — через функции из tgapp.core
+- Django: TgUser/счётчики, ORM-выборки для /calendar
+- DB-утилиты для публичных событий: set_event_visibility, list_*_public_events
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
-from telegram import ReplyKeyboardRemove, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    Update,
+)
 from telegram.ext import CallbackContext, CommandHandler, MessageHandler, Filters
 
+# ORM-утилита для «личного календаря»
 from calendarapp.utils import get_user_events_qs
+
+# FSM приглашений (для роутинга)
 from tgapp import handlers_appointments as appt
-from tgapp.fsm import clear_state, get_state, parse_date, parse_time, set_state
+
+# Общие FSM-утилиты и парсеры
+from tgapp.fsm import (
+    clear_state,
+    get_state,
+    parse_date,
+    parse_time,
+    set_state,
+    # SHARE-flow константы (Task 5)
+    FLOW_SHARE,
+    STATE_SHARE_WAIT_EVENT_ID,
+    STATE_SHARE_WAIT_VISIBILITY,
+)
+
+# Инфраструктура и учёт статистики/профилей
 from tgapp.core import (
-    # логгер и инфраструктура
     logger,
     CALENDAR,
     CANCEL_KB,
-    # регистрация в слое БД и базовые проверки
     ensure_registered,
     register_in_db_and_track,
-    # суточная статистика бота (BotStatistics)
     track_event_created,
     track_event_edited,
     track_event_cancelled,
-    # Django-профиль пользователя (TgUser) и личные счётчики
     ensure_tg_user,
     ensure_profile_from_update,
     track_user_event_created,
@@ -62,8 +87,20 @@ from tgapp.core import (
     track_user_event_cancelled,
 )
 
+# DB-утилиты для публичных событий (Task 5)
+from db import (
+    get_connection,
+    set_event_visibility,
+    list_public_events_by_owner,
+    list_my_public_events,
+)
+
 # Тип подсказка для FSM-состояния
 StateDict = Dict[str, Any]
+
+# --- Локальные константы для FSM PUBLIC_OF ---------------------------------
+FLOW_PUBLIC_OF = "PUBLIC_OF"
+STATE_PUBLIC_WAIT_TG_ID = "PUBLIC_WAIT_TG_ID"
 
 
 # ---------------------------------------------------------------------------
@@ -71,9 +108,7 @@ StateDict = Dict[str, Any]
 # ---------------------------------------------------------------------------
 
 def start(update: Update, context: CallbackContext) -> None:
-    """
-    Показать краткую справку по доступным командам.
-    """
+    """Краткая справка по доступным командам."""
     user = update.effective_user
     logger.info("/start user_id=%s @%s", user.id, user.username)
     update.message.reply_text(
@@ -82,7 +117,7 @@ def start(update: Update, context: CallbackContext) -> None:
         "• /register — создать учётную запись\n\n"
         "События:\n"
         "• /create_event — создать событие (диалог)\n"
-        "• /display_events — показать мои события\n"
+        "• /display_events — показать мои события (быстрый вывод)\n"
         "• /read_event <id> — показать событие по ID\n"
         "• /edit_event — изменить описание (диалог) или /edit_event <id> <новое>\n"
         "• /delete_event — удалить (диалог) или /delete_event <id>\n\n"
@@ -90,15 +125,17 @@ def start(update: Update, context: CallbackContext) -> None:
         "• /invite — начать приглашение на встречу (диалог)\n\n"
         "Профиль и календарь:\n"
         "• /login — привязать Telegram-аккаунт к системе\n"
-        "• /calendar — показать мой личный календарь\n\n"
+        "• /calendar — показать мой личный календарь (ORM)\n\n"
+        "Публичные события:\n"
+        "• /share_event — опубликовать/скрыть своё событие (диалог)\n"
+        "• /my_public — список моих публичных событий\n"
+        "• /public_of — показать публичные события другого пользователя (диалог)\n\n"
         "• /cancel — отменить текущую операцию"
     )
 
 
 def help_command(update: Update, context: CallbackContext) -> None:
-    """
-    Синоним /start — выводит те же подсказки.
-    """
+    """Синоним /start — выводит те же подсказки."""
     start(update, context)
 
 
@@ -106,7 +143,6 @@ def register_command(update: Update, context: CallbackContext) -> None:
     """
     Зарегистрировать пользователя в БД (таблица users, psycopg2) и
     синхронизировать Django-модель TgUser (личный кабинет в админке).
-
     Повторный вызов — безопасен (идемпотентен).
     """
     ensure_profile_from_update(update)
@@ -142,9 +178,7 @@ def register_command(update: Update, context: CallbackContext) -> None:
 
 
 def cancel_command(update: Update, context: CallbackContext) -> None:
-    """
-    Отменить текущий FSM-процесс и сбросить состояние пользователя.
-    """
+    """Отменить текущий FSM-процесс и сбросить состояние пользователя."""
     user = update.effective_user
     logger.info("/cancel user_id=%s", user.id)
     clear_state(user.id)
@@ -260,9 +294,7 @@ def create_event_process(update: Update, context: CallbackContext, state: StateD
 # ---------------------------------------------------------------------------
 
 def display_events_handler(update: Update, context: CallbackContext) -> None:
-    """
-    Показать список событий пользователя в текстовом виде (через CALENDAR).
-    """
+    """Показать список событий пользователя в текстовом виде (через CALENDAR)."""
     ensure_profile_from_update(update)
     user = update.effective_user
     if not ensure_registered(
@@ -454,9 +486,7 @@ def delete_event_start_or_inline(update: Update, context: CallbackContext) -> No
 
 
 def delete_event_process(update: Update, context: CallbackContext, state: StateDict) -> None:
-    """
-    FSM-обработчик удаления: единственный шаг — запрос ID.
-    """
+    """FSM-обработчик удаления: единственный шаг — запрос ID."""
     ensure_profile_from_update(update)
     user = update.effective_user
     msg = (update.message.text or "").strip()
@@ -501,7 +531,7 @@ def login_command(update: Update, context: CallbackContext) -> None:
     u = update.effective_user
     tg_id = u.id
 
-    # Опциональный аргумент игнорируем, если он не совпадает с фактическим ID
+    # Опциональный аргумент игнорируем, если он не совпадает с фактическим ID.
     if context.args:
         try:
             arg_id = int(context.args[0])
@@ -520,29 +550,258 @@ def login_command(update: Update, context: CallbackContext) -> None:
     )
 
 
+def _format_events_for_message(rows: List[Tuple[int, str, str, str, str]]) -> str:
+    """
+    Сформировать красивый блок текста для списка событий.
+
+    :param rows: список кортежей (id, name, date, time, details)
+    :return: готовая строка для Telegram
+    """
+    lines: List[str] = []
+    for (eid, name, d, t, details) in rows:
+        body = (details or "").strip() or "-"
+        lines.append(f"[ID:{eid}] {d} {t} — {name}\n  {body}")
+    return "\n\n".join(lines)
+
+
 def calendar_command(update: Update, context: CallbackContext) -> None:
     """
     /calendar — отправляет пользователю его календарь (события по дате/времени).
-    Источник — ORM (calendarapp.Event), отфильтровано по tg_user_id.
+    Источник: ORM (calendarapp.Event), отфильтровано по tg_user_id.
+    В конце добавляет секцию «Общие события» (Task 5) — публичные события
+    текущего пользователя.
     """
     ensure_profile_from_update(update)
     u = update.effective_user
     ensure_tg_user(u.id, u.username, u.first_name, u.last_name)
 
     try:
+        # Мой личный календарь (ORM)
         qs = get_user_events_qs(u.id)
-        if not qs.exists():
-            update.message.reply_text("Ваш календарь пуст.")
-            return
+        blocks: List[str] = []
 
-        lines = [
-            f"[ID {ev.id}] {ev.date} {ev.time} — {ev.name}\n{(ev.details or '').strip()}"
-            for ev in qs
-        ]
-        msg = "Ваши события:\n\n" + "\n\n".join(lines)
-        update.message.reply_text(msg)
+        if qs.exists():
+            own_lines = [
+                f"[ID {ev.id}] {ev.date} {ev.time} — {ev.name}\n{(ev.details or '').strip()}"
+                for ev in qs
+            ]
+            blocks.append("Ваши события:\n\n" + "\n\n".join(own_lines))
+        else:
+            blocks.append("Ваши события:\n\n— (пусто)")
+
+        # Мои публичные события (через psycopg2-утилиту)
+        conn = get_connection()
+        my_public = list_my_public_events(conn, tg_user_id=u.id)
+        if my_public:
+            blocks.append("— Общие события (ваши публичные) —\n\n" + _format_events_for_message(my_public))
+
+        update.message.reply_text("\n\n".join(blocks))
     except Exception:
         update.message.reply_text("Ошибка при получении календаря.")
+
+
+def list_my_public_command(update: Update, context: CallbackContext) -> None:
+    """
+    /my_public — вывести список публичных событий текущего пользователя.
+
+    Печатает «У вас нет публичных событий», если ничего не найдено.
+    Источник данных — таблица events через низкоуровневые функции db.py.
+    """
+    ensure_profile_from_update(update)
+    u = update.effective_user
+    # На всякий случай поддержим профиль в Django
+    ensure_tg_user(u.id, u.username, u.first_name, u.last_name)
+
+    try:
+        conn = get_connection()
+        rows = list_my_public_events(conn, tg_user_id=u.id)
+        if not rows:
+            update.message.reply_text("У вас нет публичных событий.")
+            return
+
+        update.message.reply_text(
+            "Ваши публичные события:\n\n" + _format_events_for_message(rows)
+        )
+    except Exception:
+        update.message.reply_text("Ошибка при получении публичных событий.")
+
+
+# ---------------------------------------------------------------------------
+# ПУБЛИЧНЫЕ СОБЫТИЯ (Task 5) — FSM + команды
+# ---------------------------------------------------------------------------
+
+def share_event_start(update: Update, context: CallbackContext) -> None:
+    """
+    /share_event — начало FSM публикации/скрытия события.
+    Шаги: SHARE_WAIT_EVENT_ID -> SHARE_WAIT_VISIBILITY.
+    """
+    ensure_profile_from_update(update)
+    user = update.effective_user
+
+    set_state(user.id, FLOW_SHARE, STATE_SHARE_WAIT_EVENT_ID, {})
+    update.message.reply_text(
+        "Укажите ID вашего события, которое хотите опубликовать/скрыть.\n"
+        "Для отмены — /cancel",
+        reply_markup=CANCEL_KB,
+    )
+
+
+def share_event_handle(update: Update, context: CallbackContext) -> bool:
+    """
+    FSM SHARE: обработка шагов.
+    Возвращает True, если сообщение обработано (роутер должен остановиться).
+    """
+    user = update.effective_user
+    st = get_state(user.id)
+    if not st or st["flow"] != FLOW_SHARE:
+        return False
+
+    text = (update.message.text or "").strip()
+
+    # Шаг 1 — ждём event_id
+    if st["step"] == STATE_SHARE_WAIT_EVENT_ID:
+        if text.lower() == "отмена":
+            clear_state(user.id)
+            update.message.reply_text("Отменено.", reply_markup=ReplyKeyboardRemove())
+            return True
+
+        if not text.isdigit():
+            update.message.reply_text("Нужно число — ID события. Попробуйте ещё раз:", reply_markup=CANCEL_KB)
+            return True
+
+        event_id = int(text)
+        st["data"]["event_id"] = event_id
+        set_state(user.id, FLOW_SHARE, STATE_SHARE_WAIT_VISIBILITY, st["data"])
+
+        kb = ReplyKeyboardMarkup(
+            [["Сделать публичным"], ["Сделать приватным"], ["Отмена"]],
+            resize_keyboard=True,
+            one_time_keyboard=True,
+        )
+        update.message.reply_text(
+            f"Событие #{event_id}. Выберите режим видимости:",
+            reply_markup=kb,
+        )
+        return True
+
+    # Шаг 2 — выбор видимости
+    if st["step"] == STATE_SHARE_WAIT_VISIBILITY:
+        if text.lower() in {"отмена", "/cancel"}:
+            clear_state(user.id)
+            update.message.reply_text("Отменено.", reply_markup=ReplyKeyboardRemove())
+            return True
+
+        variants = {"сделать публичным", "сделать приватным"}
+        if text.lower() not in variants:
+            update.message.reply_text("Выберите кнопку: «Сделать публичным» или «Сделать приватным».")
+            return True
+
+        make_public = (text.lower() == "сделать публичным")
+        event_id = st["data"]["event_id"]
+
+        conn = get_connection()
+        ok = set_event_visibility(conn, owner_tg_id=user.id, event_id=event_id, is_public=make_public)
+        clear_state(user.id)
+
+        if not ok:
+            update.message.reply_text(
+                "Не получилось изменить видимость. "
+                "Проверьте ID и что событие принадлежит вам.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return True
+
+        update.message.reply_text(
+            f"Готово. Событие #{event_id} теперь "
+            f"{'ПУБЛИЧНОЕ' if make_public else 'ПРИВАТНОЕ'}.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return True
+
+    return False
+
+
+# --- PUBLIC_OF FSM ----------------------------------------------------------
+
+def _inline_cancel_kb() -> InlineKeyboardMarkup:
+    """Инлайн-кнопка «Отмена» для прерывания FSM."""
+    return InlineKeyboardMarkup([[InlineKeyboardButton("Отмена", callback_data="fsm:cancel")]])
+
+
+def fsm_cancel_callback(update: Update, context: CallbackContext) -> None:
+    """
+    Обработчик инлайн-отмены для любых FSM-потоков.
+    Очищает состояние и редактирует сообщение, если пришёл callback.
+    """
+    query = update.callback_query
+    user = query.from_user
+    clear_state(user.id)
+    try:
+        query.answer("Отменено")
+        query.edit_message_text("Операция отменена.")
+    except Exception:
+        # На случай, когда нельзя редактировать — отправим новое сообщение
+        query.message.reply_text("Операция отменена.")
+    logger.info("FSM cancel by inline button, user_id=%s", user.id)
+
+
+def public_of_start(update: Update, context: CallbackContext) -> None:
+    """Запуск FSM для /public_of: спросить tg_id с инлайн-кнопкой «Отмена»."""
+    ensure_profile_from_update(update)
+    user = update.effective_user
+    set_state(user.id, FLOW_PUBLIC_OF, STATE_PUBLIC_WAIT_TG_ID, {})
+    _send_with_inline_cancel(update, "Введите Telegram ID пользователя, чьи публичные события хотите посмотреть.")
+
+
+# NOTE: telegram.Bot.send_message не поддерживает одновременно reply_markup и reply_markup_inline.
+# В python-telegram-bot v13 передаём inline-клавиатуру через параметр reply_markup.
+# Поэтому обойдём ограничение: сделаем send + отдельно edit, если нужно.
+def _send_with_inline_cancel(update: Update, text: str) -> None:
+    """Отправить текст с инлайн-кнопкой «Отмена» (для первого шага FSM)."""
+    msg = update.message.reply_text(text)
+    try:
+        msg.edit_reply_markup(_inline_cancel_kb())
+    except Exception:
+        # если нельзя редактировать — проигнорируем
+        pass
+
+
+def public_of_process(update: Update, context: CallbackContext, state: StateDict) -> None:
+    """
+    FSM PUBLIC_OF: единственный шаг — ждём tg_id и отдаём список публичных событий.
+    """
+    ensure_profile_from_update(update)
+    user = update.effective_user
+    msg = (update.message.text or "").strip()
+
+    # Текстовая отмена как fallback
+    if msg.lower() in {"отмена", "/cancel"}:
+        clear_state(user.id)
+        update.message.reply_text("Операция отменена.", reply_markup=ReplyKeyboardRemove())
+        return
+
+    if state["step"] != STATE_PUBLIC_WAIT_TG_ID:
+        update.message.reply_text("Некорректное состояние. Используйте /cancel и начните заново.")
+        return
+
+    if not msg.isdigit():
+        # Повторно просим tg_id + оставляем inline «Отмена»
+        _send_with_inline_cancel(update, "Нужно число — Telegram ID. Попробуйте ещё раз.")
+        return
+
+    owner_tg_id = int(msg)
+    conn = get_connection()
+    rows = list_public_events_by_owner(conn, owner_tg_id=owner_tg_id)
+
+    clear_state(user.id)
+    if not rows:
+        update.message.reply_text("Публичных событий у этого пользователя нет.", reply_markup=ReplyKeyboardRemove())
+        return
+
+    update.message.reply_text(
+        f"Публичные события пользователя {owner_tg_id}:\n\n" + _format_events_for_message(rows),
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -552,12 +811,18 @@ def calendar_command(update: Update, context: CallbackContext) -> None:
 def text_router(update: Update, context: CallbackContext) -> None:
     """
     Роутер FSM: направляет текст пользователя в нужный обработчик
-    в зависимости от активного потока (CREATE/EDIT/DELETE/INVITE).
+    в зависимости от активного потока (CREATE/EDIT/DELETE/INVITE/SHARE/PUBLIC_OF).
     Если пользователь вне FSM — напоминаем про /help.
     """
     user = update.effective_user
     state = get_state(user.id)
-    flow = state["flow"]
+
+    # Нет активного FSM — подсказка
+    if not state:
+        update.message.reply_text("Команда не распознана. Используйте /help.")
+        return
+
+    flow = state.get("flow")
 
     if flow == "CREATE":
         create_event_process(update, context, state)
@@ -576,11 +841,19 @@ def text_router(update: Update, context: CallbackContext) -> None:
         appt.invite_process(update, context)
         return
 
+    if flow == FLOW_SHARE:
+        if share_event_handle(update, context):
+            return
+
+    if flow == FLOW_PUBLIC_OF:
+        public_of_process(update, context, state)
+        return
+
     update.message.reply_text("Команда не распознана. Используйте /help.")
 
 
 # ---------------------------------------------------------------------------
-# РЕГИСТРАЦИЯ ХЕНДЛЕРОВ
+# РЕГИСТРАЦИЯ ХЕНДЛЕРОВ (опционально, если используешь централизованную регистрацию)
 # ---------------------------------------------------------------------------
 
 def register(dp) -> None:
@@ -605,5 +878,10 @@ def register(dp) -> None:
     dp.add_handler(CommandHandler("login", login_command))
     dp.add_handler(CommandHandler("calendar", calendar_command))
 
-    # Роутер текстов для FSM-потоков (последним, чтобы не "съедал" команды)
+    # Публичные события: публикация + мои публичные + FSM «public_of»
+    dp.add_handler(CommandHandler("share_event", share_event_start))
+    dp.add_handler(CommandHandler("my_public", list_my_public_command))
+    dp.add_handler(CommandHandler("public_of", public_of_start))
+
+    # Роутер текстов для FSM-потоков (последним, чтобы не «съедал» команды)
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, text_router))
