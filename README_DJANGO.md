@@ -1,9 +1,10 @@
----
-
 ````md
 # README_DJANGO — веб-панель, ORM и встречи (Appointment)
 
-Документ описывает **только Django-часть** проекта: модели данных, миграции, админ-панель, настройки, базовые вьюхи/urls, утилиты для встреч (Appointment) и интеграцию с общей БД (PostgreSQL). Работа телеграм-бота — в `README_BOT.md`. Общий обзор — в `README.md`. :contentReference[oaicite:1]{index=1}
+Документ описывает **только Django-часть** проекта: модели данных, миграции,
+админ-панель, настройки, базовые вьюхи/urls, утилиты для встреч (Appointment)
+и интеграцию с общей БД (PostgreSQL). Работа телеграм-бота — в `README_BOT.md`.
+Общий обзор — в `README.md`.
 
 ---
 
@@ -23,14 +24,16 @@
 - [Структура Django-проекта](#структура-django-проекта)
 - [Модели данных](#модели-данных)
   - [Модель `Event` (read-only через ORM)](#модель-event-read-only-через-orm)
+  - [Модель `TgUser` (личные кабинеты)](#модель-tguser-личные-кабинеты)
   - [Модель `BotStatistics`](#модель-botstatistics)
   - [Модель `Appointment` (встречи)](#модель-appointment-встречи)
 - [Утилиты встреч (`calendarapp/utils.py`)](#утилиты-встреч-calendarapputilspy)
-- [Админ-панель: список, фильтры, поиск](#админ-панель-список-фильтры-поиск)
+- [Админ-панель: список, фильтры, поиск, инлайны](#админ-панель-список-фильтры-поиск-инлайны)
 - [Вьюхи и маршруты](#вьюхи-и-маршруты)
 - [Интеграция с телеграм-ботом](#интеграция-с-телеграм-ботом)
   - [Общий поток данных (Event)](#общий-поток-данных-event)
   - [Общий поток данных (Appointment)](#общий-поток-данных-appointment)
+  - [Синхронизация пользователей (TgUser)](#синхронизация-пользователей-tguser)
 - [ORM-примеры: запросы в Django shell](#orm-примеры-запросы-в-django-shell)
 - [Расширение: задел под REST API (DRF)](#расширение-задел-под-rest-api-drf)
 - [Безопасность и секреты](#безопасность-и-секреты)
@@ -45,11 +48,12 @@
 
 - **Админ-панель Django** для просмотра и управления данными календаря:
   - реальные события пользователей из таблицы `events` (в неё пишет бот);
+  - модель пользователей Telegram `TgUser` (личные кабинеты + счётчики активности);
   - суточная **статистика бота** (`BotStatistics`);
   - **встречи между пользователями** (`Appointment`) со статусами и временными слотами.
-- **ORM-слой** для статистики и встреч. События маппятся на существующую таблицу (`managed=False`).
+- **ORM-слой** для статистики, встреч и пользователей. События маппятся на существующую таблицу (`managed=False`).
 - **Мини-вьюха** `healthcheck` и корневой роутинг.
-- **Единая PostgreSQL** для бота и Django — гарантирует целостность данных.
+- **Единая PostgreSQL** для бота и Django — целостные общие данные.
 
 ---
 
@@ -61,7 +65,7 @@
 - Телеграм-бот пишет **события** напрямую в таблицу `events` через `psycopg2` (см. `db.py`).
 - Django:
   - читает те же события через модель `Event` (`managed=False`, `db_table="events"`);
-  - ведёт `BotStatistics` и `Appointment` через миграции и ORM.
+  - ведёт `TgUser`, `BotStatistics` и `Appointment` через миграции и ORM.
 
 ---
 
@@ -70,7 +74,7 @@
 - **Python 3.11–3.13**
 - **Django 5.x** (Admin, ORM, миграции)
 - **PostgreSQL 14–16**
-- **psycopg2** (драйвер Postgres)
+- **psycopg2 / psycopg2-binary**
 - **Django REST Framework** (задел под API)
 
 ---
@@ -101,15 +105,12 @@
 CREATE DATABASE calendar_db;
 CREATE USER calendar_user WITH PASSWORD 'strong_password';
 GRANT ALL PRIVILEGES ON DATABASE calendar_db TO calendar_user;
-````
 
-При необходимости выдать права на схему/таблицы:
-
-```sql
+-- (рекомендуется) права на схему/таблицы:
 GRANT USAGE ON SCHEMA public TO calendar_user;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO calendar_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO calendar_user;
-```
+````
 
 ### Настройка `settings.py`
 
@@ -126,18 +127,7 @@ DATABASES = {
         "PORT": "5432",
     }
 }
-```
 
-Обязательно:
-
-* `INSTALLED_APPS` содержит `"calendarapp"` и (при необходимости) `"rest_framework"`.
-* `TIME_ZONE = "Europe/Moscow"`, `USE_TZ = True` — хранение в UTC, отображение локально.
-
-### Проверка установленных приложений
-
-В [`webapp/webapp/settings.py`](./webapp/webapp/settings.py):
-
-```python
 INSTALLED_APPS = [
     # ...
     "calendarapp",
@@ -146,17 +136,20 @@ INSTALLED_APPS = [
 ]
 ```
 
+Обязательно:
+
+* `TIME_ZONE = "Europe/Moscow"`, `USE_TZ = True` — хранение в UTC, отображение локально.
+* В пакетах есть `__init__.py`.
+
+### Проверка установленных приложений
+
 В [`webapp/calendarapp/apps.py`](./webapp/calendarapp/apps.py):
 
 ```python
 class CalendarappConfig(AppConfig):
     name = "calendarapp"
+    verbose_name = "Календарь / Бот"
 ```
-
-Пакеты помечены `__init__.py`:
-
-* [`webapp/webapp/__init__.py`](./webapp/webapp/__init__.py)
-* [`webapp/calendarapp/__init__.py`](./webapp/calendarapp/__init__.py)
 
 ---
 
@@ -169,8 +162,9 @@ python webapp/manage.py migrate
 python webapp/manage.py createsuperuser
 ```
 
-* `migrate` создаст таблицы для `BotStatistics` и `Appointment`.
-* Таблица `events` **не** создаётся миграциями Django — она уже есть (её наполняет бот). Для неё используется `managed=False`.
+* `migrate` создаст таблицы для `TgUser`, `BotStatistics` и `Appointment`.
+* Таблица `events` **не** создаётся миграциями Django — она уже есть (её наполняет бот).
+  Для неё используется `managed=False` в модели `Event`.
 
 ---
 
@@ -201,13 +195,14 @@ webapp/
 └─ calendarapp/
    ├─ __init__.py               # описание пакета приложения
    ├─ apps.py                   # AppConfig(name='calendarapp')
-   ├─ admin.py                  # админка: Event, BotStatistics, Appointment
-   ├─ models.py                 # Event (managed=False), BotStatistics, Appointment
+   ├─ admin.py                  # админка: Event, TgUser (inline Events), BotStatistics, Appointment
+   ├─ models.py                 # Event (managed=False), TgUser, BotStatistics, Appointment
    ├─ utils.py                  # занятость, проверка слотов, создание приглашений
    ├─ urls.py                   # healthcheck
    ├─ views.py                  # healthcheck
    └─ migrations/
-      └─ 0001_initial.py        # миграции (BotStatistics, Appointment)
+      ├─ 0001_initial.py
+      └─ 0002_*.py
 ```
 
 Ключевые файлы:
@@ -231,21 +226,39 @@ webapp/
   * `class Meta: managed = False` — Django не управляет таблицей;
   * `db_table = "events"`;
   * поле модели `tg_user_id` → колонка `user_id` (`db_column="user_id"`).
+* Поля:
 
-Ключевые поля:
+  * `id: BigAutoField (PK)`
+  * `name: CharField(255)`
+  * `date: DateField`
+  * `time: TimeField`
+  * `details: TextField`
+  * `tg_user_id: BigIntegerField(db_column="user_id")`
+* Назначение: **чтение** событий в админке и через ORM; запись — стороной бота.
 
-* `id: BigAutoField (PK)`
-* `name: CharField(255)`
-* `date: DateField`
-* `time: TimeField`
-* `details: TextField`
-* `tg_user_id: BigIntegerField(db_column="user_id")`
+### Модель `TgUser` (личные кабинеты)
 
-Назначение: **чтение** событий в админке и через ORM; запись — стороной бота.
+* Хранит профиль пользователя Telegram и его **персональные счётчики** активности.
+* Используется ботом для привязки через `/login` и для учёта действий.
+* Поля (основные):
+
+  * `tg_id: BigIntegerField(index=True, unique=True)` — Telegram ID
+  * `username: CharField(null=True, blank=True)`
+  * `first_name`, `last_name: CharField(null=True, blank=True)`
+  * `is_active: BooleanField(default=True)`
+  * `created_total`, `edited_total`, `cancelled_total: PositiveIntegerField(default=0)`
+  * `created_at: DateTimeField(auto_now_add=True)`, `updated_at: DateTimeField(auto_now=True)`
+* Связи:
+
+  * Inlines в админке: список событий `Event` пользователя (по `tg_user_id`).
+* Назначение:
+
+  * «Личный кабинет» в смысле карточки в админке с календарём и метриками;
+  * источник данных для статистики активности на пользователя.
 
 ### Модель `BotStatistics`
 
-* Ведёт суточные метрики, наполняется ботом через ORM:
+* Ведёт **суточные** метрики, наполняется ботом через ORM:
 
   * `date: DateField(unique=True)`
   * `user_count, event_count, edited_events, cancelled_events: PositiveIntegerField`
@@ -265,17 +278,16 @@ webapp/
   * `cancelled` (отменено),
   * `declined` (отклонено).
 * Индексация по `status`, `organizer_tg_id`, `participant_tg_id` для быстрых выборок.
+* Поля:
 
-Поля:
-
-* `event: FK(Event)|null` — опциональная привязка к событию
-* `organizer_tg_id: BigIntegerField(index=True)`
-* `participant_tg_id: BigIntegerField(index=True)`
-* `date: DateField`
-* `time: TimeField`
-* `details: TextField(blank=True, default="")`
-* `status: CharField(choices=Status.choices, default=Status.PENDING, index=True)`
-* `created_at/updated_at: DateTimeField(auto_now_add/auto_now)`
+  * `event: FK(Event)|null`
+  * `organizer_tg_id: BigIntegerField(index=True)`
+  * `participant_tg_id: BigIntegerField(index=True)`
+  * `date: DateField`
+  * `time: TimeField`
+  * `details: TextField(blank=True, default="")`
+  * `status: CharField(choices=Status.choices, default=Status.PENDING, index=True)`
+  * `created_at/updated_at: DateTimeField(auto_now_add/auto_now)`
 
 Утилита-фильтр:
 
@@ -293,8 +305,6 @@ def user_busy_q(tg_user_id: int) -> Q:
 ## Утилиты встреч (`calendarapp/utils.py`)
 
 Файл: [`webapp/calendarapp/utils.py`](./webapp/calendarapp/utils.py)
-
-Функции верхнего уровня:
 
 ```python
 def get_user_busy_slots(
@@ -329,7 +339,7 @@ def create_pending_invite_for_event(
 
 ---
 
-## Админ-панель: список, фильтры, поиск
+## Админ-панель: список, фильтры, поиск, инлайны
 
 Файл: [`webapp/calendarapp/admin.py`](./webapp/calendarapp/admin.py)
 
@@ -338,6 +348,12 @@ def create_pending_invite_for_event(
   * `list_display = ("id", "name", "date", "time", "tg_user_id")`
   * `list_filter = ("date",)`
   * `search_fields = ("name", "details", "tg_user_id")`
+
+* **TgUserAdmin**
+
+  * `list_display = ("tg_id", "username", "is_active", "created_total", "edited_total", "cancelled_total", "created_at")`
+  * `search_fields = ("tg_id", "username", "first_name", "last_name")`
+  * Inline-таблица событий пользователя (read-only список `Event` по `tg_user_id`).
 
 * **BotStatisticsAdmin**
 
@@ -349,11 +365,7 @@ def create_pending_invite_for_event(
   * `list_display = ("id", "date", "time", "status", "organizer_tg_id", "participant_tg_id", "event")`
   * `list_filter = ("status", "date")`
   * `search_fields = ("details", "organizer_tg_id", "participant_tg_id")`
-
-Подсказки:
-
-* Для больших наборов данных добавьте `date_hierarchy = "date"` в `AppointmentAdmin`.
-* В `EventAdmin` при необходимости можно добавить `ordering = ("-date", "-time")`.
+  * (опционально) `date_hierarchy = "date"`
 
 ---
 
@@ -377,8 +389,9 @@ def create_pending_invite_for_event(
 ### Общий поток данных (Event)
 
 1. Бот создаёт записи в `events` через `db.py` (psycopg2).
-2. Django модель `Event(managed=False, db_table="events")` отражает те же строки.
-3. Админка показывает события, создавшиеся пользователями через бота.
+2. Django-модель `Event(managed=False, db_table="events")` отражает те же строки.
+3. Админка показывает события, созданные пользователями через бота.
+4. Во всех сценариях прав пользователя мы проверяем **владельца** (`tg_user_id`).
 
 ### Общий поток данных (Appointment)
 
@@ -391,6 +404,12 @@ def create_pending_invite_for_event(
 4. Бот переводит статус встречи в `confirmed` / `declined` / `cancelled` (ORM).
 5. Организатор получает уведомление о результате.
 
+### Синхронизация пользователей (TgUser)
+
+1. Пользователь вызывает `/login` в боте — создаётся/обновляется `TgUser`.
+2. В админке карточка `TgUser` содержит профиль и метрики пользователя.
+3. События из `events` отображаются инлайном у соответствующего `TgUser` (по `tg_user_id`).
+
 ---
 
 ## ORM-примеры: запросы в Django shell
@@ -401,58 +420,55 @@ def create_pending_invite_for_event(
 python webapp/manage.py shell
 ```
 
-Импорт моделей:
+Импорт:
 
 ```python
-from calendarapp.models import Event, BotStatistics, Appointment
+from calendarapp.models import Event, TgUser, BotStatistics, Appointment
 from calendarapp.utils import get_user_busy_slots, is_user_free
+from datetime import date, time
 ```
 
 События владельца (по Telegram ID):
 
 ```python
-Event.objects.filter(tg_user_id=123456789).order_by("date","time")[:20]
+Event.objects.filter(tg_user_id=123456789).order_by("date", "time")[:20]
+```
+
+Пользователь и его счётчики:
+
+```python
+u, _ = TgUser.objects.get_or_create(tg_id=123456789)
+u.created_total, u.edited_total, u.cancelled_total
 ```
 
 Статистика за день:
 
 ```python
-BotStatistics.objects.get_or_create(date="2025-10-28", defaults=dict(
+BotStatistics.objects.get_or_create(date=date.today(), defaults=dict(
     user_count=0, event_count=0, edited_events=0, cancelled_events=0
 ))
 ```
 
-Проверка занятости пользователя:
+Проверка занятости и создание встречи:
 
 ```python
-is_user_free(123456789, meet_date=date(2025,12,12), meet_time=time(12,12))
-get_user_busy_slots(123456789)
-```
+is_user_free(987654321, meet_date=date(2025,12,12), meet_time=time(12,12))
+get_user_busy_slots(987654321)
 
-Создание встреч вручную (пример):
-
-```python
-from datetime import date, time
+# Пример ручного создания
 Appointment.objects.create(
     organizer_tg_id=111, participant_tg_id=222,
     date=date(2025,12,12), time=time(12,12),
-    details="Обсудим детали поставки", status=Appointment.Status.PENDING
+    details="Обсудим детали поставки",
+    status=Appointment.Status.PENDING
 )
-```
-
-Подтверждение/отмена:
-
-```python
-appt = Appointment.objects.get(id=1)
-appt.status = Appointment.Status.CONFIRMED
-appt.save(update_fields=["status","updated_at"])
 ```
 
 ---
 
 ## Расширение: задел под REST API (DRF)
 
-Пакет DRF уже в `INSTALLED_APPS`. Базовый скелет:
+Базовый скелет:
 
 ```python
 # calendarapp/api/serializers.py
@@ -498,18 +514,19 @@ urlpatterns = [
 ]
 ```
 
-> Аутентификация/права доступа — по требованиям (Token/Auth, IsAuthenticated и т. д.).
+> Вопросы аутентификации/прав доступа — по требованиям (Token/Auth, IsAuthenticated и т. п.).
 
 ---
 
 ## Безопасность и секреты
 
-* Не называйте свои файлы `secrets.py` в корне — конфликт с стандартным модулем `secrets` может ломать CSRF/логин. Используйте `bot_secrets.py` (и добавьте в `.gitignore`).
+* Не создавайте в корне проекта свой `secrets.py` — он перекроет стандартный модуль `secrets`
+  и сломает CSRF/логин. Используйте `bot_secrets.py` (в `.gitignore`).
 * Для продакшена:
 
   * `DEBUG = False`, корректный `ALLOWED_HOSTS`;
-  * секреты (`SECRET_KEY`, пароли БД) — только из переменных окружения;
-  * ограничьте доступ к `/admin`, используйте сложные пароли, 2FA (через плагин/обвязку).
+  * секреты (`SECRET_KEY`, пароли БД) — из переменных окружения;
+  * ограничьте доступ к `/admin`, сложные пароли, (при необходимости) 2FA.
 
 ---
 
@@ -520,12 +537,12 @@ urlpatterns = [
 * Статика:
 
   * `STATIC_ROOT = BASE_DIR / "staticfiles"`
-  * собрать: `python webapp/manage.py collectstatic`
-  * отдавать через Nginx или `whitenoise`.
+  * сборка: `python webapp/manage.py collectstatic`
+  * отдача — Nginx или `whitenoise`.
 * Окружение:
 
   * `DJANGO_SETTINGS_MODULE=webapp.settings`
-  * `DATABASE_URL` можно прокинуть через переменные и распарсить (например, через `dj-database-url`).
+  * `DATABASE_URL` можно прокинуть через env и распарсить (`dj-database-url`).
 * Миграции — до старта приложения.
 
 ---
@@ -536,21 +553,20 @@ urlpatterns = [
 — Запускайте из корня: `python webapp/manage.py runserver`.
 — Проверьте `INSTALLED_APPS` и `apps.py (name="calendarapp")`, наличие `__init__.py`.
 
-**Админ-панель не открывается, 500 на `/admin/login/` и ошибка `secrets.choice`**
-— В корне проекта был файл `secrets.py`, перекрыл стандартный модуль `secrets`.
-— Переименуйте ваш файл в `bot_secrets.py`. Очистите `__pycache__`.
+**Админка 500 на `/admin/login/` и ошибка `secrets.choice`**
+— В корне лежал файл `secrets.py`, перекрывший стандартный модуль.
+— Переименуйте свой файл в `bot_secrets.py`. Очистите `__pycache__`.
 
 **`psycopg2.errors.InsufficientPrivilege` при миграциях**
 — Выдайте права пользователю БД (см. раздел «Создание БД и пользователя»).
-— Проверьте, что подключение в `settings.py` корректно.
+— Проверьте подключение в `settings.py`.
 
 **В админке «События» пусто**
+— Создайте событие через бота, обновите страницу.
 — Убедитесь, что `Event.Meta.managed = False` и `db_table = "events"`, поле `tg_user_id` маппится на `user_id`.
-— Фактические данные приходят от бота; создайте событие через бота и обновите страницу.
 
-**Ошибка модулей вида `No module named 'webapp.calendarapp'`**
-— Правильный импорт внутри приложения — просто `calendarapp.*` (приложение установлено как отдельное).
-— Убедитесь, что нет относительных импортов из корня проекта.
+**Ошибка импортов вида `No module named 'webapp.calendarapp'`**
+— Внутри приложения используйте `calendarapp.*`, не абсолютные пути от корня репозитория.
 
 ---
 
@@ -558,13 +574,13 @@ urlpatterns = [
 
 * [ ] `python webapp/manage.py runserver` запускается без ошибок
 * [ ] `/admin` доступен; вход суперпользователем работает
-* [ ] В админке **События** отображают реальные записи из таблицы `events`
-* [ ] В админке **Встречи** видны, фильтры по `status/date` работают; поиск по ID/деталям — работает
+* [ ] В админке **Пользователи TG (TgUser)** отображаются; инлайн-события и счётчики видны
+* [ ] В админке **События (Event)** отображают реальные записи из таблицы `events`
+* [ ] В админке **Встречи (Appointment)** видны; фильтры по `status/date` и поиск работают
 * [ ] Статистика (`BotStatistics`) создаётся/видна; уникальность по `date` соблюдается
-* [ ] `Event` имеет `managed=False`, `db_table="events"`, поле `tg_user_id -> db_column="user_id"`
+* [ ] `Event` имеет `managed=False`, `db_table="events"`, `tg_user_id -> db_column="user_id"`
 * [ ] `Appointment` содержит индексы по `status`, `organizer_tg_id`, `participant_tg_id`
 * [ ] `INSTALLED_APPS` содержит `calendarapp` и (по необходимости) `rest_framework`
-* [ ] В пакетах есть `__init__.py`
 * [ ] Конфиг БД единый для Django и бота; миграции применены
 
 ---
@@ -573,13 +589,19 @@ urlpatterns = [
 
 ```mermaid
 erDiagram
-    EVENT ||--o{ APPOINTMENT : "optional link"
-    BOTSTATISTICS {
-        date date PK "unique"
-        user_count int
-        event_count int
-        edited_events int
-        cancelled_events int
+    TGUSER ||--o{ EVENT : "by tg_user_id"
+    EVENT  ||--o{ APPOINTMENT : "optional link"
+    TGUSER {
+        tg_id bigint PK "unique"
+        username varchar
+        first_name varchar
+        last_name varchar
+        is_active bool
+        created_total int
+        edited_total int
+        cancelled_total int
+        created_at timestamp
+        updated_at timestamp
     }
     EVENT {
         id bigint PK
@@ -601,10 +623,19 @@ erDiagram
         created_at timestamp
         updated_at timestamp
     }
+    BOTSTATISTICS {
+        date date PK "unique"
+        user_count int
+        event_count int
+        edited_events int
+        cancelled_events int
+    }
 ```
 
 ---
 
-**Примечание**: текущий файл синхронизирован с изменениями части 3 (модель встреч, утилиты занятости, админка, маршруты, документация модулей). Для общей картины см. также `README.md` и `README_BOT.md`. 
+**Примечание**: файл синхронизирован с изменениями части 3–4
+(встречи + личные кабинеты `TgUser`). Для общей картины см. также
+`README.md` и `README_BOT.md`.
 
 ```
