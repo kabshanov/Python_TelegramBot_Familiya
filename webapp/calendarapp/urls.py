@@ -11,12 +11,10 @@ urls.py
 - `/` — healthcheck: простая проверка, что сервер Django запущен
   и приложение calendarapp доступно.
 """
-
 from django.urls import path
 from . import views
 
-
 urlpatterns = [
-    # Проверка доступности приложения (возвращает простой ответ 200 OK)
     path("", views.healthcheck, name="healthcheck"),
+    path("export/<str:fmt>/", views.export_events, name="export_events"),  # <-- новый эндпоинт
 ]

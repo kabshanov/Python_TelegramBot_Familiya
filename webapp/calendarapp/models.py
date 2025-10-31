@@ -81,6 +81,13 @@ class Event(models.Model):
         verbose_name="Пользователь (TG)",
     )
 
+    is_public = models.BooleanField(
+        "Публичное",
+        default=False,
+        db_column="is_public",
+        help_text="Флаг видимости события для других пользователей",
+    )
+
     name = models.CharField("Название события", max_length=255, db_column="name")
     date = models.DateField("Дата", db_column="date")
     time = models.TimeField("Время", db_column="time")
