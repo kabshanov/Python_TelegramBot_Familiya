@@ -171,19 +171,26 @@ def setup_bot_commands(bot) -> None:
         BotCommand("start", "Справка и команды"),
         BotCommand("help", "Справка"),
         BotCommand("register", "Регистрация"),
-        BotCommand("login", "Привязать Telegram-аккаунт к системе"),  # <— добавь
-        BotCommand("calendar", "Показать мой календарь"),  # <— добавь
+        BotCommand("login", "Привязать Telegram-аккаунт"),
+        BotCommand("calendar", "Показать мой календарь"),
+
         BotCommand("create_event", "Создать событие (диалог)"),
         BotCommand("display_events", "Показать мои события"),
         BotCommand("read_event", "Показать событие по ID"),
         BotCommand("edit_event", "Изменить описание события"),
         BotCommand("delete_event", "Удалить событие"),
-        BotCommand("cancel", "Отменить текущую операцию"),
-        BotCommand("invite", "Пригласить на встречу (/invite <tg_id> <event_id> [текст])"),
-    ]
 
+        BotCommand("share_event", "Опубликовать событие (сделать публичным)"),
+        BotCommand("my_public", "Мои публичные события"),
+        BotCommand("public_of", "Публичные события пользователя"),
+        BotCommand("export", "Выгрузка (CSV/JSON)"),
+
+        BotCommand("invite", "Пригласить на встречу (диалог)"),
+        BotCommand("cancel", "Отменить текущую операцию"),
+    ]
     bot.set_my_commands(commands)
     logger.info("TG меню команд установлено (%d шт.)", len(commands))
+
 
 
 def ensure_registered(update, *, user_id: int, username: str, first_name: str) -> bool:
@@ -224,4 +231,5 @@ __all__ = [
     "track_event_created",
     "track_event_edited",
     "track_event_cancelled",
+    "ensure_profile_from_update",
 ]

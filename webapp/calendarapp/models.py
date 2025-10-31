@@ -85,7 +85,7 @@ class Event(models.Model):
         "Публичное",
         default=False,
         db_column="is_public",
-        help_text="Если включено — событие видно всем по TG ID владельца.",
+        help_text="Флаг видимости события для других пользователей",
     )
 
     name = models.CharField("Название события", max_length=255, db_column="name")

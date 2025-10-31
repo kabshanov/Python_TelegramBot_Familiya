@@ -59,22 +59,16 @@ def _send_invite_message(
     extra_details: str,
 ) -> Tuple[bool, str]:
     """
-    Отправить приглашение в Telegram участнику с инлайн-кнопками.
+    Отправить приглашение участнику с инлайн-кнопками.
 
-    :param context: telegram context
-    :param participant_tg_id: tg_id участника (куда шлём)
-    :param organizer_tg_id: tg_id организатора
-    :param ev: dict события из БД (id, name, date, time, details, user_id)
-    :param appt_id: id Appointment
-    :param extra_details: произвольный текст деталей
-    :return: (успех, сообщение_ошибки_или_пусто)
+    Возвращает (успех, сообщение_ошибки_или_пусто).
     """
     text = (
         "Вас пригласили на встречу:\n\n"
-        f"Дата/время: {ev['date']} {ev['time']}\n"
-        f"Тема: {ev['name']}\n"
-        f"Описание: {extra_details or (ev.get('details') or '')}\n\n"
-        f"Организатор: {organizer_tg_id}"
+        f"• Дата/время: {ev['date']} {ev['time']}\n"
+        f"• Тема: {ev['name']}\n"
+        f"• Комментарий: {extra_details or (ev.get('details') or '—')}\n\n"
+        "Вы можете подтвердить или отклонить приглашение:"
     )
     buttons = InlineKeyboardMarkup(
         [[
@@ -88,12 +82,18 @@ def _send_invite_message(
             text=text,
             reply_markup=buttons,
         )
+        logger.info(
+            "INVITE sent appt_id=%s organizer=%s -> participant=%s",
+            appt_id, organizer_tg_id, participant_tg_id
+        )
         return True, ""
     except Exception as exc:
         # классическая причина — участник не начинал чат с ботом
-        logger.warning("Invite delivery failed: %s", exc)
-        return False, "Приглашение не доставлено (участник не активировал бота)."
-
+        logger.warning(
+            "Invite delivery failed appt_id=%s to %s: %s",
+            appt_id, participant_tg_id, exc
+        )
+        return False, "Не удалось доставить приглашение: участник ещё не начал чат с ботом."
 
 # ------------------------------
 # FSM: /invite
@@ -102,8 +102,6 @@ def _send_invite_message(
 def invite_start(update: Any, context: Any) -> None:
     """
     Старт диалога приглашения.
-
-    Проверяем, что инициатор зарегистрирован, и просим TG ID участника.
     """
     user = update.effective_user
     if not ensure_registered(
@@ -115,17 +113,16 @@ def invite_start(update: Any, context: Any) -> None:
         return
 
     set_state(user.id, flow="INVITE", step="WAIT_PARTICIPANT_ID", data={})
+    logger.info("INVITE flow started by %s", user.id)
     update.message.reply_text(
-        "Введите TG ID участника (число):",
+        "Кого пригласить? Отправьте TG ID участника (число).",
         reply_markup=CANCEL_KB,
     )
 
 
 def invite_process(update: Any, context: Any) -> None:
     """
-    Обработчик текстовых сообщений для диалога приглашения.
-
-    Шаги:
+    Обработчик текстов в потоке INVITE:
     - WAIT_PARTICIPANT_ID → запрос event_id
     - WAIT_EVENT_ID       → запрос деталей
     - WAIT_DETAILS        → отправка приглашения
@@ -139,47 +136,47 @@ def invite_process(update: Any, context: Any) -> None:
     # Универсальная отмена
     if msg.lower() == "отмена":
         clear_state(user.id)
-        update.message.reply_text("Операция отменена.", reply_markup=ReplyKeyboardRemove())
+        logger.info("INVITE cancelled by %s at step=%s", user.id, step)
+        update.message.reply_text("Ок, отменил.", reply_markup=ReplyKeyboardRemove())
         return
 
-    # Шаг 1: участник
+    # Шаг 1: TG ID участника
     if step == "WAIT_PARTICIPANT_ID":
         participant_tg_id = _safe_int(msg)
         if participant_tg_id is None or participant_tg_id <= 0:
-            update.message.reply_text("TG ID должен быть положительным числом. Повторите ввод:", reply_markup=CANCEL_KB)
+            update.message.reply_text("TG ID — это положительное число. Попробуйте ещё раз:", reply_markup=CANCEL_KB)
             return
         if participant_tg_id == user.id:
-            update.message.reply_text("Нельзя приглашать самого себя. Введите TG ID другого пользователя:", reply_markup=CANCEL_KB)
+            update.message.reply_text("Нельзя приглашать самого себя. Укажите ID другого пользователя:", reply_markup=CANCEL_KB)
             return
 
         data["participant_tg_id"] = participant_tg_id
         set_state(user.id, flow="INVITE", step="WAIT_EVENT_ID", data=data)
-        update.message.reply_text(
-            "Введите ID события (из ваших событий):",
-            reply_markup=CANCEL_KB,
-        )
+        logger.info("INVITE step1 ok by %s -> participant=%s", user.id, participant_tg_id)
+        update.message.reply_text("Теперь отправьте ID вашего события (из списка ваших событий):", reply_markup=CANCEL_KB)
         return
 
-    # Шаг 2: событие
+    # Шаг 2: ID события
     if step == "WAIT_EVENT_ID":
         event_id = _safe_int(msg)
         if event_id is None or event_id <= 0:
-            update.message.reply_text("ID события должен быть положительным числом. Повторите ввод:", reply_markup=CANCEL_KB)
+            update.message.reply_text("ID события — это положительное число. Попробуйте ещё раз:", reply_markup=CANCEL_KB)
             return
 
         ev = get_event_by_id(CONN, event_id)
         if not ev:
-            update.message.reply_text("Событие не найдено. Укажите корректный ID:", reply_markup=CANCEL_KB)
+            update.message.reply_text("Не нашёл такое событие. Укажите корректный ID:", reply_markup=CANCEL_KB)
             return
         if ev["user_id"] != user.id:
-            update.message.reply_text("Это событие вам не принадлежит. Укажите свой event_id:", reply_markup=CANCEL_KB)
+            update.message.reply_text("Это не ваше событие. Укажите ID события, созданного вами:", reply_markup=CANCEL_KB)
             return
 
         data["event"] = ev
         set_state(user.id, flow="INVITE", step="WAIT_DETAILS", data=data)
+        logger.info("INVITE step2 ok by %s event_id=%s", user.id, event_id)
         update.message.reply_text(
-            "Добавьте детали (сообщение участнику). "
-            "Если не нужно — напишите «Пропустить».",
+            "Добавьте короткий комментарий для участника.\n"
+            "Если комментарий не нужен — напишите «Пропустить».",
             reply_markup=CANCEL_KB,
         )
         return
@@ -189,7 +186,6 @@ def invite_process(update: Any, context: Any) -> None:
         details = "" if msg.lower() == "пропустить" else msg
         ev = data["event"]
 
-        # Лёгкая обёртка под Event для утилиты create_pending_invite_for_event
         class _E:
             id = ev["id"]
             date = ev["date"]
@@ -204,7 +200,9 @@ def invite_process(update: Any, context: Any) -> None:
         )
         if err == "busy":
             clear_state(user.id)
-            update.message.reply_text("Участник занят в это время.", reply_markup=ReplyKeyboardRemove())
+            logger.info("INVITE blocked (busy) %s -> %s at %s %s",
+                        user.id, data["participant_tg_id"], ev["date"], ev["time"])
+            update.message.reply_text("У участника на это время уже есть встреча.", reply_markup=ReplyKeyboardRemove())
             return
 
         ok, err_msg = _send_invite_message(
@@ -215,22 +213,23 @@ def invite_process(update: Any, context: Any) -> None:
             appt_id=appt.id,
             extra_details=details,
         )
+        clear_state(user.id)
+
         if not ok:
-            # Если не доставили — пометим как отменённую (чтобы не висела PENDING)
             appt.status = Appointment.Status.CANCELLED
             appt.save(update_fields=["status"])
-            clear_state(user.id)
+            logger.info("INVITE delivery failed -> appt %s cancelled", appt.id)
             update.message.reply_text(err_msg, reply_markup=ReplyKeyboardRemove())
             return
 
-        clear_state(user.id)
-        update.message.reply_text("Приглашение отправлено. Статус: ожидание.", reply_markup=ReplyKeyboardRemove())
+        logger.info("INVITE done appt_id=%s", appt.id)
+        update.message.reply_text("Приглашение отправил. Ждём ответа участника.", reply_markup=ReplyKeyboardRemove())
         return
 
-    # Если почему-то шаг не распознан
+    # Если шаг потерялся
     clear_state(user.id)
-    update.message.reply_text("Состояние диалога потеряно. Начните заново: /invite", reply_markup=ReplyKeyboardRemove())
-
+    logger.warning("INVITE state desync for user=%s", user.id)
+    update.message.reply_text("Потеряли шаг диалога. Начните заново: /invite", reply_markup=ReplyKeyboardRemove())
 
 # ------------------------------
 # Callback-кнопки подтверждения/отклонения
@@ -239,9 +238,6 @@ def invite_process(update: Any, context: Any) -> None:
 def appointment_decision_handler(update: Any, context: Any) -> None:
     """
     Обработка инлайн-кнопок «Подтвердить/Отклонить».
-
-    Формат callback_data: 'appt:ok:<id>' или 'appt:no:<id>'.
-    Меняем статус Appointment и уведомляем организатора.
     """
     query = update.callback_query
     if not query or not query.data:
@@ -264,35 +260,34 @@ def appointment_decision_handler(update: Any, context: Any) -> None:
         query.answer("Встреча не найдена.")
         return
 
-    # Разрешаем подтверждать/отклонять только участнику
     user_id = query.from_user.id
     if user_id != appt.participant_tg_id:
-        query.answer("Вы не участник этой встречи.")
+        query.answer("Подтверждать или отклонять может только участник этой встречи.")
         return
 
-    # Если уже не PENDING — показываем текущее состояние и ничего не меняем
     if appt.status != Appointment.Status.PENDING:
         query.answer(f"Текущий статус: {appt.get_status_display()}.")
         return
 
     if action == "ok":
         appt.status = Appointment.Status.CONFIRMED
-        result_text = "Встреча подтверждена ✅"
+        human_text = "Встреча подтверждена ✅"
         notify = f"Участник {appt.participant_tg_id} подтвердил встречу #{appt.id} на {appt.date} {appt.time}."
     else:
         appt.status = Appointment.Status.CANCELLED
-        result_text = "Встреча отклонена ❌"
+        human_text = "Встреча отклонена ❌"
         notify = f"Участник {appt.participant_tg_id} отклонил встречу #{appt.id}."
 
     appt.save(update_fields=["status"])
-    query.edit_message_reply_markup(reply_markup=None)
-    query.answer(result_text)
+    logger.info("APPT %s -> %s by %s", appt.id, appt.status, user_id)
 
-    # Уведомим организатора
+    query.edit_message_reply_markup(reply_markup=None)
+    query.answer(human_text)
+
     try:
         context.bot.send_message(chat_id=appt.organizer_tg_id, text=notify)
     except Exception as exc:
-        logger.warning("Organizer notify failed: %s", exc)
+        logger.warning("Notify organizer failed: %s", exc)
 
 
 __all__ = [

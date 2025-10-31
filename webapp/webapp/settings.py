@@ -142,3 +142,7 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # ---------------------------------------------------------------------------
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+# Экспорт календаря (Task 6)
+SITE_BASE_URL = os.getenv("SITE_BASE_URL", "http://127.0.0.1:8000")
+# сколько живёт токен выгрузки (секунды) — по умолчанию 15 минут
+EXPORT_TOKEN_MAX_AGE = int(os.getenv("EXPORT_TOKEN_MAX_AGE", "900"))
