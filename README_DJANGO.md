@@ -177,7 +177,8 @@ python webapp/manage.py createsuperuser
 Из **корня**:
 
 ```bash
-python webapp/manage.py runserver
+cd webapp
+python manage.py runserver
 # Главная:  http://127.0.0.1:8000/
 # Админка:  http://127.0.0.1:8000/admin/
 ```
