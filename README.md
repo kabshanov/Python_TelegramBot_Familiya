@@ -146,7 +146,7 @@
 
     ```python
     # bot_secrets.py
-    API_TOKEN = '7507737623:AAEpq0__SwMUTLRHryM8-YHghSvyNJz0Mw8' 
+    API_TOKEN = 'ВАШ_ТОКЕН' 
     ```
 
     *(`Dockerfile.bot` скопирует этот файл внутрь контейнера)*
@@ -264,38 +264,38 @@ docker compose exec web python manage.py createsuperuser
 ├── Dockerfile.bot          # Инструкция по сборке Бота
 ├── init.sql                # SQL-скрипт для "ручных" таблиц (users, events)
 │
-├── bot.py                  # 🚀 Точка входа Telegram-бота
-├── bot_secrets.py          # 🔑 Секретный API_TOKEN для бота
-├── db.py                   # 🗃️ Низкоуровневый модуль работы с psycopg2
-├── requirements.txt        # 📦 Зависимости Python
+├── bot.py                  # Точка входа Telegram-бота
+├── bot_secrets.py          # Секретный API_TOKEN для бота
+├── db.py                   # Низкоуровневый модуль работы с psycopg2
+├── requirements.txt        # Зависимости Python
 │
-├── tgapp/                  # 🤖 Логика бота
+├── tgapp/                  # Логика бота
 │   ├── core.py             # Общие хелперы, "ленивые" подключения
 │   ├── fsm.py              # Логика состояний (FSM)
 │   ├── handlers_events.py  # Обработчики команд событий
 │   └── handlers_appointments.py # Обработчики команд встреч
 │
-├── webapp/                 # 🌐 Django-проект
-│   ├── manage.py           # 🛠️ Утилита управления Django
+├── webapp/                 # Django-проект
+│   ├── manage.py           # Утилита управления Django
 │   │
-│   ├── webapp/             # ⚙️ Конфигурация Django
+│   ├── webapp/             # Конфигурация Django
 │   │   ├── settings.py     # Глобальные настройки
 │   │   ├── urls.py         # Корневой роутер (admin/, api/, /)
 │   │   ├── wsgi.py         # Точка входа для Gunicorn
 │   │   └── ...
 │   │
-│   └── calendarapp/        # 💿 Приложение "Календарь"
+│   └── calendarapp/        # Приложение "Календарь"
 │       ├── models.py       # Модели (TgUser, Event, Appointment, BotStatistics)
 │       ├── admin.py        # Настройки админ-панели
 │       ├── views.py        # Вьюхи для экспорта (CSV/JSON)
 │       ├── urls.py         # Роутер (export/, api/)
-│       ├── api/            # 📡 Директория для REST API
+│       ├── api/            # Директория для REST API
 │       │   ├── serializers.py # Сериализаторы DRF
 │       │   ├── urls.py        # Роутер API
 │       │   └── views.py       # Вьюсеты DRF
 │       └── ...
 │
-└── tests/                  # 🧪 Автоматические тесты
+└── tests/                  # Автоматические тесты
     ├── conftest.py
     └── test_*.py
 ```
