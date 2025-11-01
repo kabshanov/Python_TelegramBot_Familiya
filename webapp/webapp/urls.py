@@ -24,4 +24,7 @@ urlpatterns = [
 
     # Основное приложение календаря (корневой маршрут)
     path("", include("calendarapp.urls")),
+
+    # DRF API
+    path("api/", include("calendarapp.api.urls")),
 ]

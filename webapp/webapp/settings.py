@@ -102,7 +102,31 @@ DATABASES = {
         "PASSWORD": "calendar_password",
         "HOST": "localhost",
         "PORT": "5432",
+        "TEST": {
+            "NAME": "test_calendar_db",
+        },
     }
+}
+
+
+# ---------------------------------------------------------------------------
+# Базовая конфигурация DRF
+# ---------------------------------------------------------------------------
+
+REST_FRAMEWORK = {
+    # В браузере (DRF Browsable API) можно логиниться через обычную Django-сессию:
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    # По умолчанию — read-only, приватные вьюхи сами проверят токен:
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.AllowAny",
+    ],
+    # Красота в браузере
+    "DEFAULT_RENDERER_CLASSES": [
+        "rest_framework.renderers.JSONRenderer",
+        "rest_framework.renderers.BrowsableAPIRenderer",
+    ],
 }
 
 

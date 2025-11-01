@@ -1,10 +1,9 @@
-````md
-# README_DJANGO — веб-панель, ORM, встречи, публичные события и экспорт
+Вот полностью обновлённый **README_DJANGO.md** — можно целиком заменить файл.
 
-Документ описывает **только Django-часть** проекта: модели данных, миграции,
-админ-панель, настройки, базовые вьюхи/urls, утилиты (встречи, экспорт),
-а также интеграцию с общей БД (PostgreSQL). Работа телеграм-бота — в `README_BOT.md`.
-Общий обзор — в `README.md`. Основа файла была расширена и обновлена под задачи 4–6.  
+````md
+# README_DJANGO — веб-панель, ORM, экспорт, REST API и тесты
+
+Этот документ описывает **Django-часть** проекта: модели данных, миграции, админ-панель, вьюхи/urls, задел и реализацию REST API (DRF), а также автоматические тесты (pytest). Телеграм-бот описан в `README_BOT.md`, общий обзор — в `README.md`. В основе — предыдущая версия файла, расширенная под задания **№7 (API)** и **№9 (тесты)**. :contentReference[oaicite:0]{index=0}
 
 ---
 
@@ -13,91 +12,80 @@
 - [Назначение и ключевые возможности](#назначение-и-ключевые-возможности)
 - [Архитектура Django-части](#архитектура-django-части)
 - [Стек технологий](#стек-технологий)
-- [Инструменты и документация](#инструменты-и-документация)
 - [Требования](#требования)
 - [Установка и конфигурация](#установка-и-конфигурация)
   - [Создание БД и пользователя](#создание-бд-и-пользователя)
-  - [Настройка `settings.py`](#настройка-settingspy)
-  - [Проверка установленных приложений](#проверка-установленных-приложений)
+  - [Настройка settings.py](#настройка-settingspy)
+  - [Проверка приложений](#проверка-приложений)
 - [Миграции и первичный запуск](#миграции-и-первичный-запуск)
 - [Запуск dev-сервера](#запуск-dev-сервера)
 - [Структура Django-проекта](#структура-django-проекта)
 - [Модели данных](#модели-данных)
-  - [Модель `Event` (read-only через ORM)](#модель-event-read-only-через-orm)
-  - [Модель `TgUser` (личные кабинеты)](#модель-tguser-личные-кабинеты)
-  - [Модель `BotStatistics`](#модель-botstatistics)
-  - [Модель `Appointment` (встречи)](#модель-appointment-встречи)
+  - [Event (read-only через ORM)](#event-read-only-через-orm)
+  - [TgUser (личные кабинеты)](#tguser-личные-кабинеты)
+  - [BotStatistics](#botstatistics)
+  - [Appointment (встречи)](#appointment-встречи)
 - [Утилиты (`calendarapp/utils.py`)](#утилиты-calendarapputilspy)
-  - [Занятость и создание приглашения](#занятость-и-создание-приглашения)
+  - [Занятость и инвайт](#занятость-и-инвайт)
   - [Экспорт: токены и полезные данные](#экспорт-токены-и-полезные-данные)
-- [Админ-панель: список, фильтры, поиск, инлайны](#админ-панель-список-фильтры-поиск-инлайны)
-- [Вьюхи и маршруты](#вьюхи-и-маршруты)
-  - [Healthcheck](#healthcheck)
-  - [Экспорт CSV/JSON](#экспорт-csvjson)
+- [Админ-панель](#админ-панель)
+- [Вьюхи и маршруты (Healthcheck, Export)](#вьюхи-и-маршруты-healthcheck-export)
+- [REST API](#rest-api-задание-7)
+  - [Установка DRF](#установка-drf)
+  - [Эндпоинты и примеры](#эндпоинты-и-примеры)
+  - [Маршрутизация](#маршрутизация)
+  - [Примечания по безопасности](#примечания-по-безопасности)
+- [Тесты](#тесты-задание-9)
+  - [Установка pytest](#установка-pytest)
+  - [Запуск тестов](#запуск-тестов)
+  - [Что покрыто тестами](#что-покрыто-тестами)
+  - [Советы по CI](#советы-по-ci)
 - [Интеграция с телеграм-ботом](#интеграция-с-телеграм-ботом)
-  - [Общий поток данных (Event)](#общий-поток-данных-event)
-  - [Общий поток данных (Appointment)](#общий-поток-данных-appointment)
-  - [Синхронизация пользователей (TgUser)](#синхронизация-пользователей-tguser)
-- [ORM-примеры в Django shell](#orm-примеры-в-django-shell)
-- [Расширение: задел под REST API (DRF)](#расширение-задел-под-rest-api-drf)
-- [Безопасность и секреты](#безопасность-и-секреты)
-- [Продакшн-заметки](#продакшн-заметки)
 - [Типичные проблемы и решения](#типичные-проблемы-и-решения)
-- [Чек-лист перед PR](#чек-лист-перед-pr)
-- [Приложение A: ER-диаграмма (Mermaid)](#приложение-a-er-диаграмма-mermaid)
+- [Продакшн-заметки](#продакшн-заметки)
+- [Лицензия и автор](#лицензия-и-автор)
+- [Приложение A: ER-диаграмма](#приложение-a-er-диаграмма)
 
 ---
 
 ## Назначение и ключевые возможности
 
-- **Админ-панель Django** для просмотра и управления календарными данными:
-  - реальные **события** пользователей из таблицы `events` (в неё пишет бот);
-  - **личные кабинеты** пользователей Telegram (`TgUser`) + счётчики активности;
-  - **встречи** между пользователями (`Appointment`) со статусами и проверкой занятости;
-  - **суточная статистика** бота (`BotStatistics`).
-- **Публичные события**: флаг `is_public` в `events`, чтобы делиться своими событиями.
-- **Экспорт** своих событий в **CSV/JSON** через защищённую ссылку (подписанный токен + TTL).
-- **ORM-слой** для пользователей/встреч/статистики; `Event` маппится на существующую таблицу (`managed=False`).
-- Мини-вьюхи и маршруты, единая PostgreSQL для бота и Django.
+- **Единая админ-панель**:
+  - реальные **события** из таблицы `events` (её заполняет бот напрямую);
+  - **профили** пользователей (`TgUser`) + счётчики активности;
+  - **встречи** (`Appointment`) со статусами и проверкой занятости;
+  - **суточная статистика** (`BotStatistics`).
+- **Публичные события**: флаг `is_public` в `events`.
+- **Экспорт** своих событий в **CSV/JSON** по подписанному токену (TTL).
+- **REST API (DRF)**: публичный список событий, базовый CRUD для встреч/пользователей, выдача экспортного токена.
+- **Автотесты (pytest)** для критических узлов. Основа и общая логика следуют прежней версии документа. :contentReference[oaicite:1]{index=1}
 
 ---
 
 ## Архитектура Django-части
 
 - Проект `webapp/`:
-  - пакет `webapp/webapp/` — настройки, корневые urls, WSGI-вход;
-  - приложение `webapp/calendarapp/` — модели, админка, утилиты, urls/views.
-- Бот работает с `events` напрямую (psycopg2, см. `db.py`).
-- Django читает те же события через модель `Event` (`managed=False`, `db_table="events"`), а также ведёт `TgUser`, `Appointment`, `BotStatistics` через ORM и миграции.
+  - `webapp/webapp/` — настройки, корневые `urls`, `wsgi`;
+  - `webapp/calendarapp/` — модели, админка, утилиты, urls/views (+ `api/` для DRF).
+- Бот пишет в `events` через `psycopg2`; Django читает её через модель `Event(managed=False)`. Остальные модели — через миграции. :contentReference[oaicite:2]{index=2}
 
 ---
 
 ## Стек технологий
 
-- **Python 3.11–3.13**
-- **Django 5.x** (Admin, ORM, миграции)
-- **PostgreSQL 14–16**
-- **psycopg2 / psycopg2-binary**
-- **Django REST Framework** (задел под API)
-- **logging** (единый стиль логов)
-
----
-
-## Инструменты и документация
-
-- Django — https://docs.djangoproject.com/
-- Django Admin — https://docs.djangoproject.com/en/stable/ref/contrib/admin/
-- Django ORM — https://docs.djangoproject.com/en/stable/topics/db/models/
-- PostgreSQL — https://www.postgresql.org/docs/
-- psycopg2 — https://www.psycopg.org/docs/
-- Python — https://docs.python.org/3/
+- Python 3.11–3.13
+- Django 5.x (Admin, ORM, Migrations)
+- PostgreSQL 14–16, psycopg2
+- Django REST Framework (DRF) — API слой
+- pytest + pytest-django — автотесты
 
 ---
 
 ## Требования
 
-- **Система**: Python 3.11+, PostgreSQL 14+, свободный порт 8000.
-- **Браузер**: Chrome/Edge/Firefox (последние), Safari 16+.
+- Python 3.11+
+- PostgreSQL 14+
+- Браузер: Chrome/Edge/Firefox (последние), Safari 16+
 
 ---
 
@@ -107,7 +95,7 @@
 
 ```sql
 CREATE DATABASE calendar_db;
-CREATE USER calendar_user WITH PASSWORD 'strong_password';
+CREATE USER calendar_user WITH PASSWORD 'calendar_password';
 GRANT ALL PRIVILEGES ON DATABASE calendar_db TO calendar_user;
 
 GRANT USAGE ON SCHEMA public TO calendar_user;
@@ -117,7 +105,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO calendar_user;
 
 ### Настройка `settings.py`
 
-Файл: [`webapp/webapp/settings.py`](./webapp/webapp/settings.py)
+Файл: `webapp/webapp/settings.py`
 
 ```python
 DATABASES = {
@@ -134,25 +122,28 @@ DATABASES = {
 INSTALLED_APPS = [
     # ...
     "calendarapp",
-    # ...
-    "rest_framework",  # опционально (задел под API)
+    # REST API
+    "rest_framework",
 ]
 
-# Экспорт (Task 6)
-EXPORT_TOKEN_MAX_AGE = 900  # сек, по умолчанию 15 минут
+# Экспорт (TTL токена в секундах)
+EXPORT_TOKEN_MAX_AGE = 900
+
+TIME_ZONE = "Europe/Moscow"
+USE_TZ = True
 ```
 
-Важно: `TIME_ZONE = "Europe/Moscow"`, `USE_TZ = True` — хранение в UTC, отображение локально.
-Не забыть `__init__.py` в пакетах.
+> В пакетах обязательно наличие `__init__.py`. 
 
-### Проверка установленных приложений
+### Проверка приложений
 
-[`webapp/calendarapp/apps.py`](./webapp/calendarapp/apps.py):
+`webapp/calendarapp/apps.py`:
 
 ```python
 class CalendarappConfig(AppConfig):
     name = "calendarapp"
     verbose_name = "Календарь / Бот"
+}
 ```
 
 ---
@@ -166,322 +157,324 @@ python webapp/manage.py migrate
 python webapp/manage.py createsuperuser
 ```
 
-* `migrate` создаст таблицы для `TgUser`, `BotStatistics` и `Appointment`.
-* Таблица `events` **не** создаётся миграциями Django — она уже есть (её наполняет бот).
-  Для неё используется `managed=False` в модели `Event`.
+> Миграции создают таблицы для `TgUser`, `BotStatistics`, `Appointment`. Таблица `events` **не мигрируется** (её ведёт бот), она маппится в ORM через `managed=False`. 
 
 ---
 
 ## Запуск dev-сервера
-
-Из **корня**:
 
 ```bash
 cd webapp
 python manage.py runserver
 # Главная:  http://127.0.0.1:8000/
 # Админка:  http://127.0.0.1:8000/admin/
+# API (DRF): http://127.0.0.1:8000/api/  (Browsable API)
 ```
-
-> Запуск из корня обеспечивает корректный `PYTHONPATH` и резолвинг модулей.
 
 ---
 
 ## Структура Django-проекта
 
-```text
+```
 webapp/
 ├─ manage.py
 ├─ webapp/
 │  ├─ __init__.py
 │  ├─ settings.py
-│  ├─ urls.py                # /admin, / (include calendarapp.urls)
+│  ├─ urls.py                # /admin, /, include(calendarapp.urls), include(calendarapp.api.urls)
 │  └─ wsgi.py
 └─ calendarapp/
    ├─ __init__.py
    ├─ apps.py
    ├─ admin.py
-   ├─ models.py              # Event (managed=False, is_public), TgUser, BotStatistics, Appointment
-   ├─ utils.py               # занятость/инвайт, токены экспорта, полезные сборки данных
-   ├─ urls.py                # healthcheck, export/<str:fmt>/
-   ├─ views.py               # healthcheck, export_events
-   └─ migrations/
+   ├─ models.py              # Event(managed=False, is_public), TgUser, BotStatistics, Appointment
+   ├─ utils.py               # занятость/инвайты, токены экспорта, сборки данных
+   ├─ urls.py                # healthcheck, export/<fmt>/
+   ├─ views.py               # healthcheck, export_events (CSV/JSON)
+   └─ api/
+      ├─ __init__.py
+      ├─ serializers.py      # DRF-сериализаторы
+      ├─ views.py            # DRF-вьюсеты/представления
+      └─ urls.py             # router → /api/...
 ```
-
-Ключевые файлы:
-
-* `webapp/calendarapp/models.py`
-* `webapp/calendarapp/admin.py`
-* `webapp/calendarapp/utils.py`
-* `webapp/calendarapp/views.py`
-* `webapp/webapp/settings.py`
 
 ---
 
 ## Модели данных
 
-Файл: [`webapp/calendarapp/models.py`](./webapp/calendarapp/models.py)
+Файл: `webapp/calendarapp/models.py` 
 
-### Модель `Event` (read-only через ORM)
+### `Event` (read-only через ORM)
 
-* Маппит **существующую** таблицу `events`, куда пишет бот (через SQL в `db.py`).
-* Важное:
+* Отражает **существующую** таблицу `events`, которую заполняет бот.
+* `Meta.managed = False`, `db_table = "events"`.
+* Маппинг `tg_user_id` → колонка `user_id` (`db_column="user_id"`).
+* Поля: `id`, `user (to_field="tg_id", db_column="user_id", db_constraint=False)`, `name`, `date`, `time`, `details`, `is_public`.
+* Назначение: чтение/списки/экспорт, не для записи из Django.
 
-  * `class Meta: managed = False`
-  * `db_table = "events"`
-  * поле модели `tg_user_id` → колонка `user_id` (`db_column="user_id"`).
-  * **Новое:** `is_public: BooleanField` — флаг публикации события.
-* Поля: `id`, `name`, `date`, `time`, `details`, `tg_user_id (user_id)`, `is_public`.
+### `TgUser` (личные кабинеты)
 
-> Запись/изменение `events` выполняет бот; Django модель используется для чтения, списков в админке и связанных операций (встречи, экспорт).
+* Первичный ключ — `tg_id` (BigInteger).
+* Атрибуты профиля и **счётчики**: создано/редактировано/отменено.
+* В админке — поиск, инлайн событий пользователя. 
 
-### Модель `TgUser` (личные кабинеты)
+### `BotStatistics`
 
-* Профиль пользователя Telegram и **персональные счётчики** активности.
-* Поля (основные): `tg_id (unique)`, `username`, `first_name`, `last_name`, `is_active`,
-  `created_total`, `edited_total`, `cancelled_total`, `created_at`, `updated_at`.
-* Инлайн-события пользователя в админке (по `tg_user_id`).
+* Суточные агрегаты: `date (unique)`, `user_count`, `event_count`, `edited_events`, `cancelled_events`. 
 
-### Модель `BotStatistics`
+### `Appointment` (встречи)
 
-* Суточные метрики, которые обновляются ботом:
-
-  * `date (unique)`, `user_count`, `event_count`, `edited_events`, `cancelled_events`.
-
-### Модель `Appointment` (встречи)
-
-* `event: FK(Event)` с `DO_NOTHING` и `db_constraint=False` (логическая связь к внешней таблице).
-* `organizer_tg_id`, `participant_tg_id`, `date`, `time`, `details`, `status` (`pending|confirmed|declined|cancelled`).
-* Индексы по `status` и TG-ID для быстрого поиска.
+* Логическая FK на `Event` (`DO_NOTHING`, `db_constraint=False`).
+* Поля: `organizer_tg_id`, `participant_tg_id`, `date`, `time`, `details`, `status` (`pending|confirmed|declined|cancelled`), timestamps.
+* Вспом. метод `user_busy_q(tg_user_id: int) -> Q`. 
 
 ---
 
 ## Утилиты (`calendarapp/utils.py`)
 
-### Занятость и создание приглашения
+### Занятость и инвайт
 
 ```python
-def get_user_busy_slots(tg_user_id, date_from=None, date_to=None) -> list[tuple]:
-    """[(date, time, appt_id, status), ...] — pending/confirmed слоты."""
-
-def is_user_free(tg_user_id, meet_date, meet_time) -> bool:
-    """True, если нет пересечений с pending/confirmed."""
-
-@transaction.atomic
-def create_pending_invite_for_event(organizer_tg_id, participant_tg_id, event, details=""):
-    """
-    Если участник свободен — создаёт Appointment(status=PENDING),
-    иначе возвращает (None, "busy").
-    """
+get_user_busy_slots(tg_user_id, date_from=None, date_to=None) -> list[tuple]
+is_user_free(tg_user_id, meet_date, meet_time) -> bool
+create_pending_invite_for_event(organizer_tg_id, participant_tg_id, event, details="")
 ```
 
 ### Экспорт: токены и полезные данные
 
 ```python
-def make_export_token(tg_user_id: int) -> str:
-    """Подписанный токен (signing.dumps), включает tg_user_id."""
-
-def verify_export_token(token: str, max_age: int) -> int:
-    """Проверка подписи и TTL (возвращает tg_user_id, иначе ValueError)."""
-
-def get_user_events_payload(tg_user_id: int) -> list[dict]:
-    """Список словарей событий пользователя (id, name, date, time, details, tg_user_id)."""
+make_export_token(tg_user_id: int) -> str
+verify_export_token(token: str, max_age: int) -> int
+get_user_events_payload(tg_user_id: int) -> list[dict]
 ```
 
-> TTL берётся из `settings.EXPORT_TOKEN_MAX_AGE` (по умолчанию 900 сек).
+> TTL берётся из `settings.EXPORT_TOKEN_MAX_AGE` (по умолчанию 900 сек). 
 
 ---
 
-## Админ-панель: список, фильтры, поиск, инлайны
+## Админ-панель
 
-[`webapp/calendarapp/admin.py`](./webapp/calendarapp/admin.py)
-
-* **EventAdmin**
-
-  * `list_display = ("id", "name", "date", "time", "tg_user_id", "is_public")`
-  * `list_filter = ("date", "is_public")`
-  * `search_fields = ("name", "details", "tg_user_id")`
-* **TgUserAdmin**
-
-  * `list_display = ("tg_id", "username", "is_active", "created_total", "edited_total", "cancelled_total", "created_at")`
-  * `search_fields = ("tg_id", "username", "first_name", "last_name")`
-  * inline событий пользователя (read-only) по `tg_user_id`.
-* **BotStatisticsAdmin**
-
-  * `list_display = ("date", "user_count", "event_count", "edited_events", "cancelled_events")`
-  * `list_filter = ("date",)`
-* **AppointmentAdmin**
-
-  * `list_display = ("id", "date", "time", "status", "organizer_tg_id", "participant_tg_id", "event")`
-  * `list_filter = ("status", "date")`
-  * `search_fields = ("details", "organizer_tg_id", "participant_tg_id")`
+* **EventAdmin**: `list_display=("id","name","date","time","tg_user_id","is_public")`, фильтры по `date/is_public`, поиск по `name/details/tg_user_id`.
+* **TgUserAdmin**: отображение счётчиков, поиск по `tg_id/username`.
+* **BotStatisticsAdmin**: фильтр по дате.
+* **AppointmentAdmin**: столбцы `status/date` и поиск по TG-ID. 
 
 ---
 
-## Вьюхи и маршруты
+## Вьюхи и маршруты (Healthcheck, Export)
 
-### Healthcheck
+* `GET /` → healthcheck: `"Calendar WebApp is running."`
+* `GET /export/<fmt>/?token=...` → экспорт событий владельца:
 
-* `calendarapp.views.healthcheck` → простой ответ `"Calendar WebApp is running."`
-* `calendarapp.urls`: `path("", views.healthcheck, name="healthcheck")`
+  * `fmt ∈ {csv, json}`
+  * токен подписан `SECRET_KEY`, несёт `tg_user_id`, проверяется TTL. 
 
-### Экспорт CSV/JSON
+---
 
-* Эндпоинт: `path("export/<str:fmt>/", views.export_events, name="export_events")`
-* `fmt` ∈ `{ "csv", "json" }`
-* Квери-параметр: `token=...` (подписанный токен, несущий `tg_user_id`)
-* Алгоритм:
+## REST API (Задание №7)
 
-  1. `verify_export_token(token, max_age=settings.EXPORT_TOKEN_MAX_AGE)` → `tg_user_id`
-  2. `get_user_events_payload(tg_user_id)` — список событий владельца
-  3. Отдача CSV/JSON (UTF-8), корректные `Content-Type` и `Content-Disposition`
+### Установка DRF
+
+```bash
+pip install djangorestframework
+# в settings.py → INSTALLED_APPS += ["rest_framework"]
+```
+
+### Эндпоинты и примеры
+
+> Базовая реализация для интеграции с внешними системами. Для демо сценариев аутентификация упрощена — обратите внимание на раздел «Безопасность» ниже.
+
+1. **Публичные события**
+   `GET /api/events/public/` — список `Event` с `is_public=True`.
+
+Параметры запроса:
+
+* `date_from=YYYY-MM-DD`, `date_to=YYYY-MM-DD`
+* `search=строка` (по `name/details`)
+* пагинация DRF (`?page=`)
+
+Ответ (пример):
+
+```json
+[
+  {"id": 101, "name": "Демо", "date": "2025-12-01", "time": "10:00:00",
+   "details": "", "tg_user_id": 123456789, "is_public": true}
+]
+```
+
+2. **Профили пользователей (минимум)**
+   `GET /api/users/`, `POST /api/users/`
+   Создание профиля для привязки Telegram → Django:
+
+```json
+POST /api/users/
+{"tg_id": 123456789, "username": "misha"}
+```
+
+3. **Встречи**
+   `GET /api/appointments/` — фильтры: `status`, `organizer_tg_id`, `participant_tg_id`, дата/время.
+   `POST /api/appointments/` — создание pending-встречи (с проверкой свободного слота):
+
+```json
+POST /api/appointments/
+{
+  "organizer_tg_id": 111,
+  "participant_tg_id": 222,
+  "event_id": 101,
+  "date": "2025-12-01",
+  "time": "12:30:00",
+  "details": "краткая встреча"
+}
+```
+
+Ответ `201 Created`:
+
+```json
+{"id": 55, "status": "pending", "...": "..."}
+```
+
+4. **Экспорт — токен**
+   `POST /api/export/token/` → выдать подписанный токен по `tg_id`:
+
+```json
+POST /api/export/token/
+{"tg_id": 123456789}
+
+# Ответ:
+{"token": "signed-token", "expires_in": 900}
+```
+
+> Далее клиент может скачать экспорт:
+> `GET /export/json/?token=...` или `GET /export/csv/?token=...`
+
+### Маршрутизация
+
+`webapp/webapp/urls.py`:
+
+```python
+urlpatterns = [
+    path("admin/", admin.site.urls),
+    path("", include("calendarapp.urls")),
+    path("api/", include("calendarapp.api.urls")),  # DRF
+]
+```
+
+`calendarapp/api/urls.py` (пример):
+
+```python
+router = DefaultRouter()
+router.register("events/public", PublicEventViewSet, basename="public-events")
+router.register("users", TgUserViewSet)
+router.register("appointments", AppointmentViewSet)
+
+urlpatterns = [
+    path("", include(router.urls)),
+    path("export/token/", ExportTokenView.as_view()),
+]
+```
+
+> Сериализаторы/вьюсеты — в `calendarapp/api/serializers.py`, `calendarapp/api/views.py`.
+
+### Примечания по безопасности
+
+* Для реальной эксплуатации:
+
+  * включить аутентификацию (Token/OAuth/JWT), `IsAuthenticated`;
+  * ограничить выдачу экспортных токенов только владельцу;
+  * rate-limit на чувствительных эндпоинтах;
+  * валидация входных данных и object-level permissions.
+
+---
+
+## Тесты
+
+### Установка pytest
+
+```bash
+pip install pytest pytest-django
+```
+
+В `pytest.ini` указать:
+
+```ini
+[pytest]
+DJANGO_SETTINGS_MODULE = webapp.settings
+python_files = tests/test_*.py
+```
+
+### Запуск тестов
+
+Из корня:
+
+```bash
+pytest --reuse-db -q
+```
+
+> На типовой машине вывод тестов: **6 passed** (возможны предупреждения сторонних пакетов).
+> При первом запуске без `--reuse-db` pytest-django создаёт тестовую БД.
+
+### Что покрыто тестами
+
+* **Экспорт**: JSON и CSV (заголовки, кодировка, минимальная структура).
+* **Handlers (бот-события) в упрощённом контексте**: help/start ответ.
+* **Модели**: базовые операции `TgUser`, `Appointment`, инкременты статистики.
+
+Цель — регрессия критических узлов без избыточной хрупкости.
+
+### Советы по CI
+
+* Кэшировать виртуальное окружение и `--reuse-db`.
+* Для PostgreSQL в CI — роль с правами на создание тестовой БД либо стратегия `keepdb`.
 
 ---
 
 ## Интеграция с телеграм-ботом
 
-### Общий поток данных (Event)
-
-1. Бот создаёт записи в `events` (`db.py`, psycopg2).
-2. Django-модель `Event(managed=False)` отражает эти записи.
-3. `/calendar` в боте показывает события и **кнопки экспорта** (ссылка на Django).
-4. Экспорт доступен **только владельцу**, потому что ссылка содержит подписанный токен с его `tg_user_id`.
-
-### Общий поток данных (Appointment)
-
-1. Бот собирает данные (участник, событие, комментарий), проверяет занятость.
-2. `utils.create_pending_invite_for_event(...)` создаёт ORM-запись, если всё ок.
-3. Подтверждение/отклонение идёт через бот, статус обновляется в БД.
-
-### Синхронизация пользователей (TgUser)
-
-1. При `/login` бот создаёт/обновляет `TgUser` (привязка Telegram → Django).
-2. В админке у пользователя видны инлайн-события и счётчики.
-
----
-
-## ORM-примеры в Django shell
-
-```bash
-python webapp/manage.py shell
-```
-
-```python
-from calendarapp.models import Event, TgUser, BotStatistics, Appointment
-from calendarapp.utils import get_user_busy_slots, is_user_free, make_export_token, verify_export_token, get_user_events_payload
-from django.conf import settings
-from datetime import date, time
-
-# События владельца (по Telegram ID)
-Event.objects.filter(tg_user_id=123456789).order_by("date", "time")[:20]
-
-# Профиль и счётчики
-u, _ = TgUser.objects.get_or_create(tg_id=123456789)
-u.created_total, u.edited_total, u.cancelled_total
-
-# Проверка занятости / создание встречи
-is_user_free(987654321, date(2025,12,12), time(12,12))
-get_user_busy_slots(987654321)
-
-# Экспортный токен
-tok = make_export_token(123456789)
-tg_id = verify_export_token(tok, settings.EXPORT_TOKEN_MAX_AGE)
-payload = get_user_events_payload(tg_id)
-```
-
----
-
-## Расширение: задел под REST API (DRF)
-
-* `calendarapp/api/serializers.py` — сериализаторы
-* `calendarapp/api/views.py` — вьюсеты
-* `calendarapp/api/urls.py` — роутер DRF
-* Подключение: `path("api/", include("calendarapp.api.urls"))`
-* Аутентификация/разрешения — по требованиям (Token/Auth, IsAuthenticated, Object-level perms)
-
----
-
-## Безопасность и секреты
-
-* Не создавайте в корне пользовательский `secrets.py` — он перекроет стандартный модуль и сломает CSRF/логин. Секреты бота — `bot_secrets.py` (в `.gitignore`).
-* Для продакшена:
-
-  * `DEBUG = False`, корректный `ALLOWED_HOSTS`
-  * секреты из env: `SECRET_KEY`, креды БД
-  * ограничение доступа к `/admin`, сильные пароли, при необходимости 2FA
-* Экспорт:
-
-  * токен подписан `SECRET_KEY` и действителен `EXPORT_TOKEN_MAX_AGE` секунд
-  * токен не хранится в БД, не раскрывает приватные данные
-
----
-
-## Продакшн-заметки
-
-* WSGI: `webapp/webapp/wsgi.py`
-* Сервер: `gunicorn`/`uWSGI`
-* Статика:
-  `STATIC_ROOT = BASE_DIR / "staticfiles"`,
-  `python webapp/manage.py collectstatic`,
-  отдача через Nginx или `whitenoise`
-* Окружение:
-  `DJANGO_SETTINGS_MODULE=webapp.settings`, переменные окружения для БД/секретов
-* Миграции — до старта приложения
+* **Поток Event**: бот пишет в `events` (SQL), Django читает через модель `Event(managed=False)`; экспорт выдаётся через Django ссылками из бота.
+* **Поток Appointment**: бот собирает ввод → вызывает utils для проверки занятости → пишет через ORM.
+* **Синхронизация TgUser**: при логине/командах бот создаёт/обновляет профиль в Django. 
 
 ---
 
 ## Типичные проблемы и решения
 
-* **`ModuleNotFoundError: No module named 'calendarapp'` при `runserver`**
-  Запускайте из корня: `python webapp/manage.py runserver`. Проверьте `INSTALLED_APPS`, `apps.py (name="calendarapp")`, `__init__.py`.
-
-* **500 на `/admin/login/` + `secrets.choice`**
-  В корне лежал файл `secrets.py`. Переименуйте свои секреты в `bot_secrets.py`. Очистите `__pycache__`.
-
-* **`psycopg2.errors.InsufficientPrivilege` при миграциях**
-  Выдайте права пользователю БД (см. «Создание БД и пользователя»).
-
-* **`FieldError: Cannot resolve keyword 'tg_user_id'`**
-  Проверьте маппинг поля: в `Event` атрибут `tg_user_id` маппится на колонку `user_id` (`db_column="user_id"`). В ORM-фильтрах используйте `tg_user_id=...`.
-
-* **Экспорт 403/400**
-  Неверный/просроченный токен, либо отсутствует `EXPORT_TOKEN_MAX_AGE`. Проверьте настройки и заново сформируйте ссылку из бота.
-
-* **Публичные события не отображаются**
-  Убедитесь, что бот проставил `is_public=True` в `events` и фильтры в ORM учитывают флаг.
+* `ModuleNotFoundError: 'calendarapp'` → запускать из корня (`python webapp/manage.py runserver`), проверить `INSTALLED_APPS`, `apps.py`, `__init__.py`.
+* `psycopg2.errors.InsufficientPrivilege` на тестах → выдать права пользователю БД или использовать `--reuse-db`.
+* Экспорт даёт 400/403 → истёк/неверен токен; заново запросить через API/бота.
+* `FieldError: Cannot resolve keyword 'tg_user_id'` → помнить, что это поле маппится на колонку `user_id` (`db_column`), фильтровать по `tg_user_id`. 
 
 ---
 
-## Чек-лист перед PR
+## Продакшн-заметки
 
-* [ ] `python webapp/manage.py runserver` — ок
-* [ ] `/admin` доступен, суперпользователь входит
-* [ ] **TgUser** отображаются; счётчики обновляются
-* [ ] **Event** показывает реальные записи `events` (в т.ч. `is_public`)
-* [ ] **Appointment** видны; фильтры по `status/date` работают
-* [ ] **BotStatistics** создаются/видны; уникальность по `date`
-* [ ] `calendarapp/urls.py` содержит `export/<str:fmt>/`
-* [ ] `views.export_events` проверяет токен и отдаёт CSV/JSON
-* [ ] `utils.make_export_token/verify_export_token/get_user_events_payload` присутствуют
-* [ ] `settings.EXPORT_TOKEN_MAX_AGE` задан (или используется значение по умолчанию)
+* `DEBUG=False`, `ALLOWED_HOSTS`, секреты из ENV.
+* Сервис статики: `collectstatic` + Nginx/Whitenoise.
+* WSGI: `gunicorn`/`uWSGI`; миграции — до старта приложения.
 
 ---
 
-## Приложение A: ER-диаграмма (Mermaid)
+## Лицензия и автор
+
+* Лицензия: MIT (при необходимости уточнить корпоративную политику).
+* Автор/контакт: укажите ФИО и e-mail владельца проекта.
+
+---
+
+## Приложение A: ER-диаграмма
 
 ```mermaid
 erDiagram
     TGUSER ||--o{ EVENT : "by tg_user_id"
     EVENT  ||--o{ APPOINTMENT : "optional link"
     TGUSER {
-        tg_id bigint PK "unique"
+        tg_id bigint PK
         username varchar
         first_name varchar
         last_name varchar
         is_active bool
-        created_total int
-        edited_total int
-        cancelled_total int
+        events_created int
+        events_edited int
+        events_cancelled int
         created_at timestamp
         updated_at timestamp
     }
@@ -502,17 +495,15 @@ erDiagram
         status varchar
         organizer_tg_id bigint
         participant_tg_id bigint
-        event_id bigint "FK (logical, DO_NOTHING)"
+        event_id bigint "logical FK"
         created_at timestamp
         updated_at timestamp
     }
     BOTSTATISTICS {
-        date date PK "unique"
+        date date PK
         user_count int
         event_count int
         edited_events int
         cancelled_events int
     }
 ```
-
----
