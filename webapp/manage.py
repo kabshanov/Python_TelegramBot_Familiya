@@ -1,5 +1,5 @@
 """
-manage.py
+webapp/manage.py
 ==========
 
 Командный интерфейс Django-проекта **Calendar WebApp**.

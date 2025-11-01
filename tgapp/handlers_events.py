@@ -8,7 +8,7 @@ tgapp.handlers_events
 Команды:
 - /start, /help, /register, /cancel
 - /create_event                — создать событие (FSM)
-- /display_events              — показать мои события (через CALENDAR)
+- /display_events              — показать мои события
 - /read_event <id>             — показать одно событие
 - /edit_event [id msg]         — изменить описание (inline или FSM)
 - /delete_event [id]           — удалить событие (inline или FSM)
@@ -51,7 +51,7 @@ from tgapp import handlers_appointments as appt
 from tgapp.fsm import clear_state, get_state, parse_date, parse_time, set_state
 from tgapp.core import (
     logger,                 # общий логгер приложения
-    CALENDAR,               # слой работы с БД (psycopg2)
+    get_calendar,           # <-- ИЗМЕНЕНИЕ: импортируем "фабрику"
     CANCEL_KB,              # ReplyKeyboard с «Отмена»
     ensure_registered,      # проверка/регистрация в users (psycopg2)
     register_in_db_and_track,
@@ -171,6 +171,7 @@ def register_command(update: Update, context: CallbackContext) -> None:
 
     ok_db = True
     try:
+        # Эта функция теперь сама управляет своим подключением
         register_in_db_and_track(
             update,
             user_id=user.id,
@@ -280,8 +281,11 @@ def create_event_process(update: Update, context: CallbackContext, state: StateD
 
     if step == "WAIT_DETAILS":
         data["details"] = msg
+        calendar = None
         try:
-            event_id = CALENDAR.create_event(
+            # --- ИЗМЕНЕНИЕ: "Ленивое" получение ---
+            calendar = get_calendar()
+            event_id = calendar.create_event(
                 user_id=user.id,
                 name=data["name"],
                 date_str=data["date"],
@@ -303,6 +307,9 @@ def create_event_process(update: Update, context: CallbackContext, state: StateD
             log.exception("CREATE failed user_id=%s", user.id)
         finally:
             clear_state(user.id)
+            # --- ИЗМЕНЕНИЕ: Закрываем соединение ---
+            if calendar and calendar.conn:
+                calendar.conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -321,13 +328,20 @@ def display_events_handler(update: Update, context: CallbackContext) -> None:
     ):
         return
 
+    calendar = None
     try:
-        res = CALENDAR.display_events(user.id)
+        # --- ИЗМЕНЕНИЕ: "Ленивое" получение ---
+        calendar = get_calendar()
+        res = calendar.display_events(user.id)
         update.message.reply_text(res)
         log.info("DISPLAY_EVENTS ok user_id=%s", user.id)
     except Exception:
         update.message.reply_text("Ошибка при получении списка событий.")
         log.exception("DISPLAY_EVENTS failed user_id=%s", user.id)
+    finally:
+        # --- ИЗМЕНЕНИЕ: Закрываем соединение ---
+        if calendar and calendar.conn:
+            calendar.conn.close()
 
 
 def read_event_handler(update: Update, context: CallbackContext) -> None:
@@ -346,13 +360,20 @@ def read_event_handler(update: Update, context: CallbackContext) -> None:
         update.message.reply_text("ID должен быть числом.")
         return
 
+    calendar = None
     try:
-        res = CALENDAR.read_event(user.id, event_id)
+        # --- ИЗМЕНЕНИЕ: "Ленивое" получение ---
+        calendar = get_calendar()
+        res = calendar.read_event(user.id, event_id)
         update.message.reply_text(res or "Событие не найдено.")
         log.info("READ_EVENT ok user_id=%s event_id=%s", user.id, event_id)
     except Exception:
         update.message.reply_text("Ошибка при чтении события.")
         log.exception("READ_EVENT failed user_id=%s event_id=%s", user.id, event_id)
+    finally:
+        # --- ИЗМЕНЕНИЕ: Закрываем соединение ---
+        if calendar and calendar.conn:
+            calendar.conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -385,8 +406,11 @@ def edit_event_start_or_inline(update: Update, context: CallbackContext) -> None
             return
 
         new_text = parts[2]
+        calendar = None
         try:
-            ok = CALENDAR.edit_event(user.id, event_id, new_text)
+            # --- ИЗМЕНЕНИЕ: "Ленивое" получение ---
+            calendar = get_calendar()
+            ok = calendar.edit_event(user.id, event_id, new_text)
             if ok:
                 track_event_edited()
                 track_user_event_edited(user.id)
@@ -398,6 +422,10 @@ def edit_event_start_or_inline(update: Update, context: CallbackContext) -> None
         except Exception:
             update.message.reply_text("Ошибка при изменении события.")
             log.exception("EDIT inline failed user_id=%s event_id=%s", user.id, event_id)
+        finally:
+            # --- ИЗМЕНЕНИЕ: Закрываем соединение ---
+            if calendar and calendar.conn:
+                calendar.conn.close()
         return
 
     set_state(user.id, flow="EDIT", step="WAIT_ID", data={})
@@ -417,29 +445,34 @@ def edit_event_process(update: Update, context: CallbackContext, state: StateDic
         log.info("EDIT cancelled user_id=%s", user.id)
         return
 
-    if state["step"] == "WAIT_ID":
-        try:
-            event_id = int(msg)
-        except ValueError:
-            update.message.reply_text("ID должен быть числом. Введите ID:", reply_markup=CANCEL_KB)
+    calendar = None
+    try:
+        if state["step"] == "WAIT_ID":
+            try:
+                event_id = int(msg)
+            except ValueError:
+                update.message.reply_text("ID должен быть числом. Введите ID:", reply_markup=CANCEL_KB)
+                return
+
+            # --- ИЗМЕНЕНИЕ: "Ленивое" получение ---
+            calendar = get_calendar()
+            preview = calendar.read_event(user.id, event_id)
+            if not preview:
+                update.message.reply_text(
+                    "Это событие вам не принадлежит или не существует. Укажите свой event_id:",
+                    reply_markup=CANCEL_KB,
+                )
+                log.info("EDIT wrong_owner/not_found user_id=%s event_id=%s", user.id, event_id)
+                return
+
+            set_state(user.id, flow="EDIT", step="WAIT_NEW_DETAILS", data={"id": event_id})
+            update.message.reply_text("Введите новое описание:", reply_markup=CANCEL_KB)
             return
 
-        preview = CALENDAR.read_event(user.id, event_id)
-        if not preview:
-            update.message.reply_text(
-                "Это событие вам не принадлежит или не существует. Укажите свой event_id:",
-                reply_markup=CANCEL_KB,
-            )
-            log.info("EDIT wrong_owner/not_found user_id=%s event_id=%s", user.id, event_id)
-            return
-
-        set_state(user.id, flow="EDIT", step="WAIT_NEW_DETAILS", data={"id": event_id})
-        update.message.reply_text("Введите новое описание:", reply_markup=CANCEL_KB)
-        return
-
-    if state["step"] == "WAIT_NEW_DETAILS":
-        try:
-            ok = CALENDAR.edit_event(user.id, state["data"]["id"], msg)
+        if state["step"] == "WAIT_NEW_DETAILS":
+            # --- ИЗМЕНЕНИЕ: "Ленивое" получение ---
+            calendar = get_calendar()
+            ok = calendar.edit_event(user.id, state["data"]["id"], msg)
             if ok:
                 track_event_edited()
                 track_user_event_edited(user.id)
@@ -448,11 +481,16 @@ def edit_event_process(update: Update, context: CallbackContext, state: StateDic
             else:
                 update.message.reply_text("Событие не найдено.", reply_markup=ReplyKeyboardRemove())
                 log.info("EDIT not_found user_id=%s event_id=%s", user.id, state["data"]["id"])
-        except Exception:
-            update.message.reply_text("Ошибка при изменении события.", reply_markup=ReplyKeyboardRemove())
-            log.exception("EDIT failed user_id=%s event_id=%s", user.id, state["data"]["id"])
-        finally:
             clear_state(user.id)
+
+    except Exception:
+        update.message.reply_text("Ошибка при изменении события.", reply_markup=ReplyKeyboardRemove())
+        log.exception("EDIT failed user_id=%s data=%s", user.id, state.get("data"))
+        clear_state(user.id)
+    finally:
+        # --- ИЗМЕНЕНИЕ: Закрываем соединение ---
+        if calendar and calendar.conn:
+            calendar.conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -484,8 +522,11 @@ def delete_event_start_or_inline(update: Update, context: CallbackContext) -> No
             update.message.reply_text("ID должен быть числом.")
             return
 
+        calendar = None
         try:
-            ok = CALENDAR.delete_event(user.id, event_id)
+            # --- ИЗМЕНЕНИЕ: "Ленивое" получение ---
+            calendar = get_calendar()
+            ok = calendar.delete_event(user.id, event_id)
             if ok:
                 track_event_cancelled()
                 track_user_event_cancelled(user.id)
@@ -497,6 +538,10 @@ def delete_event_start_or_inline(update: Update, context: CallbackContext) -> No
         except Exception:
             update.message.reply_text("Ошибка при удалении события.")
             log.exception("DELETE inline failed user_id=%s event_id=%s", user.id, event_id)
+        finally:
+            # --- ИЗМЕНЕНИЕ: Закрываем соединение ---
+            if calendar and calendar.conn:
+                calendar.conn.close()
         return
 
     set_state(user.id, flow="DELETE", step="WAIT_ID", data={})
@@ -523,8 +568,11 @@ def delete_event_process(update: Update, context: CallbackContext, state: StateD
             update.message.reply_text("ID должен быть числом. Введите ID:", reply_markup=CANCEL_KB)
             return
 
+        calendar = None
         try:
-            ok = CALENDAR.delete_event(user.id, event_id)
+            # --- ИЗМЕНЕНИЕ: "Ленивое" получение ---
+            calendar = get_calendar()
+            ok = calendar.delete_event(user.id, event_id)
             if ok:
                 track_event_cancelled()
                 track_user_event_cancelled(user.id)
@@ -538,10 +586,14 @@ def delete_event_process(update: Update, context: CallbackContext, state: StateD
             log.exception("DELETE failed user_id=%s event_id=%s", user.id, event_id)
         finally:
             clear_state(user.id)
+            # --- ИЗМЕНЕНИЕ: Закрываем соединение ---
+            if calendar and calendar.conn:
+                calendar.conn.close()
 
 
 # ---------------------------------------------------------------------------
 # ЛОГИН И ЛИЧНЫЙ КАЛЕНДАРЬ
+# (Эти функции используют ORM, им не нужен 'calendar')
 # ---------------------------------------------------------------------------
 
 def login_command(update: Update, context: CallbackContext) -> None:
@@ -598,6 +650,7 @@ def calendar_command(update: Update, context: CallbackContext) -> None:
 
 # ---------------------------------------------------------------------------
 # ПУБЛИКАЦИЯ (Task 5)
+# (Эти функции используют ORM, им не нужен 'calendar')
 # ---------------------------------------------------------------------------
 
 def share_event_start(update: Update, context: CallbackContext) -> None:
@@ -633,6 +686,7 @@ def share_public_process(update: Update, context: CallbackContext, state: StateD
             return
 
         try:
+            # Используем ORM-модель Event для обновления
             updated = Event.objects.filter(id=event_id, user_id=u.id).update(is_public=True)
             if updated:
                 update.message.reply_text(
@@ -763,9 +817,16 @@ def text_router(update: Update, context: CallbackContext) -> None:
     Если пользователь вне FSM — напоминаем про /help.
     """
     user = update.effective_user
-    state = get_state(user.id)
-    flow = state["flow"]
-    log.debug("text_router user_id=%s flow=%s step=%s", user.id, flow, state["step"])
+    state = get_state(user.id)  # <-- Вы получаете user.id здесь
+    flow = state.get("flow")
+
+    # Если нет потока, не в FSM
+    if not flow:
+        update.message.reply_text("Команда не распознана. Используйте /help.")
+        return
+
+    # --- ИСПРАВЛЕНО ---
+    log.debug("text_router user_id=%s flow=%s step=%s", user.id, flow, state.get("step"))
 
     if flow == "CREATE":
         create_event_process(update, context, state)
@@ -777,6 +838,7 @@ def text_router(update: Update, context: CallbackContext) -> None:
         delete_event_process(update, context, state)
         return
     if flow == "INVITE":
+        # Этот роутер делегирует обработку другому модулю
         appt.invite_process(update, context)
         return
     if flow == "SHARE_PUBLIC":
@@ -786,7 +848,11 @@ def text_router(update: Update, context: CallbackContext) -> None:
         public_of_process(update, context, state)
         return
 
-    update.message.reply_text("Команда не распознана. Используйте /help.")
+    # --- ИСПРАВЛЕНО ---
+    # Неизвестный или сломанный FSM-поток
+    log.warning("Unknown FSM flow: user_id=%s flow=%s", user.id, flow)
+    clear_state(user.id)
+    update.message.reply_text("Произошла внутренняя ошибка FSM, состояние сброшено.")
 
 
 # ---------------------------------------------------------------------------

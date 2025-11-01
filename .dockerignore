@@ -1,0 +1,12 @@
+.git
+.venv
+__pycache__
+*.pyc
+.idea
+.vscode
+*.md
+.env
+docker-compose.yml
+Dockerfile.web
+Dockerfile.bot
+init.sql

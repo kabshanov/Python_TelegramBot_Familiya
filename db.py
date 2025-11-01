@@ -21,6 +21,7 @@ db.py
 
 from __future__ import annotations
 
+import os
 import logging
 from datetime import datetime
 
@@ -38,17 +39,22 @@ def get_connection() -> PGConnection:
     """
     Установить подключение к PostgreSQL и вернуть объект соединения.
 
-    Возвращает:
-        PGConnection: активное соединение с автокоммитом.
+    Читает хост, порт и данные из переменных окружения,
+    если они есть. По умолчанию использует 'localhost' для локальной разработки.
     """
     conn: PGConnection = psycopg2.connect(
-        host="localhost",
-        database="calendar_db",
-        user="calendar_user",
-        password="calendar_password",
+        # ВАЖНО: 'db' для Docker, 'localhost' для локального
+        host=os.getenv("DB_HOST", "db"),
+        database=os.getenv("DB_NAME", "calendar_db"),
+        user=os.getenv("DB_USER", "calendar_user"),
+        password=os.getenv("DB_PASSWORD", "calendar_password"),
+        port=int(os.getenv("DB_PORT", "5432")),
     )
     conn.autocommit = True
-    logger.info("DB: подключение установлено (autocommit=%s).", conn.autocommit)
+    logger.info(
+        "DB: подключение установлено (host=%s, db=%s, autocommit=%s).",
+        conn.info.host, conn.info.dbname, conn.autocommit
+    )
     return conn
 
 

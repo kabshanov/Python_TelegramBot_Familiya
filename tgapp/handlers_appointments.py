@@ -1,5 +1,5 @@
 """
-tgapp.handlers_appointments
+tgapp/handlers_appointments.py
 ===========================
 
 FSM-приглашения на встречу:
@@ -23,9 +23,9 @@ from telegram import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRe
 
 from tgapp.core import (
     logger,
-    CONN,
     ensure_registered,
     CANCEL_KB,
+    get_connection,  # <-- Изменилось: импортируем функцию, а не CONN
 )
 from tgapp.fsm import get_state, set_state, clear_state
 from calendarapp.models import Appointment
@@ -163,7 +163,22 @@ def invite_process(update: Any, context: Any) -> None:
             update.message.reply_text("ID события — это положительное число. Попробуйте ещё раз:", reply_markup=CANCEL_KB)
             return
 
-        ev = get_event_by_id(CONN, event_id)
+        # ---
+        # Изменение: получаем "ленивое" подключение
+        # ---
+        conn = None
+        try:
+            conn = get_connection()
+            ev = get_event_by_id(conn, event_id)
+        except Exception as e:
+            logger.exception("Ошибка получения события %s", event_id)
+            update.message.reply_text(f"Ошибка при поиске события: {e}", reply_markup=CANCEL_KB)
+            return
+        finally:
+            if conn:
+                conn.close()
+        # --- Конец изменения ---
+
         if not ev:
             update.message.reply_text("Не нашёл такое событие. Укажите корректный ID:", reply_markup=CANCEL_KB)
             return

@@ -1,5 +1,5 @@
 """
-settings.py
+webapp/webapp/settings.py/settings.py
 ============
 
 Глобальные настройки Django-проекта **Calendar WebApp**.
@@ -97,11 +97,13 @@ WSGI_APPLICATION = "webapp.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": "calendar_db",
-        "USER": "calendar_user",
-        "PASSWORD": "calendar_password",
-        "HOST": "localhost",
-        "PORT": "5432",
+        # Читаем из .env, с fallback на ваши старые значения
+        "NAME": os.getenv("DB_NAME", "calendar_db"),
+        "USER": os.getenv("DB_USER", "calendar_user"),
+        "PASSWORD": os.getenv("DB_PASSWORD", "calendar_password"),
+        # ВАЖНО: 'db' для Docker, 'localhost' для локального запуска
+        "HOST": os.getenv("DB_HOST", "localhost"),
+        "PORT": os.getenv("DB_PORT", "5432"),
         "TEST": {
             "NAME": "test_calendar_db",
         },

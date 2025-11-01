@@ -1,5 +1,5 @@
 """
-wsgi.py
+webapp/wsgi.py
 =======
 
 WSGI-точка входа Django-проекта **Calendar WebApp**.

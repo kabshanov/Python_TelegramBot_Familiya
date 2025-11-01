@@ -1,9 +1,9 @@
 """
-tgapp.core
+tgapp/core.py
 Базовая инфраструктура бота:
 - bootstrap Django
 - логирование
-- подключение к БД и Calendar
+- функции-фабрики для Calendar и DB Connection
 - общие утилиты (меню, ensure_registered)
 - учёт статистики (BotStatistics)
 """
@@ -51,9 +51,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- Подключение к БД (общая для бота) ---
-CONN = get_connection()
-CALENDAR = Calendar(CONN)
+
+# --- "Ленивое" получение объектов БД ---
+# Мы не создаем глобальные CONN и CALENDAR, чтобы избежать ошибок при импорте.
+# Вместо этого хендлеры будут вызывать эти функции, когда им понадобится
+# подключение.
+
+def get_calendar() -> Calendar:
+    """Возвращает новый экземпляр Calendar с новым подключением."""
+    return Calendar(get_connection())
+
 
 # --- Общая клавиатура «Отмена» для диалогов ---
 CANCEL_KB = ReplyKeyboardMarkup([["Отмена"]], resize_keyboard=True, one_time_keyboard=True)
@@ -198,11 +205,17 @@ def ensure_registered(update, *, user_id: int, username: str, first_name: str) -
     Проверить регистрацию пользователя, при необходимости — подсказать /register.
     Возвращает True, если пользователь зарегистрирован.
     """
+    conn = None
     try:
-        exists = user_exists(CONN, user_id)
+        conn = get_connection()
+        exists = user_exists(conn, user_id)
     except Exception:
+        logger.exception("Ошибка доступа к базе при проверке регистрации.")
         update.message.reply_text("Ошибка доступа к базе при проверке регистрации.")
         return False
+    finally:
+        if conn:
+            conn.close()
 
     if exists:
         return True
@@ -213,17 +226,26 @@ def ensure_registered(update, *, user_id: int, username: str, first_name: str) -
 
 def register_in_db_and_track(update, *, user_id: int, username: str, first_name: str) -> None:
     """Регистрация пользователя + учёт статистики «новый пользователь»."""
-    already_exists = user_exists(CONN, user_id)
-    register_user(CONN, user_id, username or "", first_name or "")
-    update.message.reply_text("Регистрация выполнена. Можно создавать события.")
-    track_new_user(tg_user_id=user_id, is_new=not already_exists)
+    conn = None
+    try:
+        conn = get_connection()
+        already_exists = user_exists(conn, user_id)
+        register_user(conn, user_id, username or "", first_name or "")
+        update.message.reply_text("Регистрация выполнена. Можно создавать события.")
+        track_new_user(tg_user_id=user_id, is_new=not already_exists)
+    except Exception:
+        logger.exception("Ошибка при регистрации пользователя %s", user_id)
+        update.message.reply_text("Произошла ошибка при регистрации.")
+    finally:
+        if conn:
+            conn.close()
 
 
 # Удобный алиас, чтобы из хендлеров импортировать одним местом
 __all__ = [
     "logger",
-    "CONN",
-    "CALENDAR",
+    "get_calendar",         # <-- Изменилось
+    "get_connection",       # <-- Добавилось
     "CANCEL_KB",
     "setup_bot_commands",
     "ensure_registered",

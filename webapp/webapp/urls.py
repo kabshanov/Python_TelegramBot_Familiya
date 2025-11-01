@@ -1,5 +1,5 @@
 """
-urls.py
+webapp/webapp/urls.py
 =======
 
 Корневой маршрутизатор Django-проекта **Calendar WebApp**.

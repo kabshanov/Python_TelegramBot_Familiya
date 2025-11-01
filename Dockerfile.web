@@ -1,0 +1,21 @@
+# Базовый образ
+FROM python:3.11-slim-bookworm
+
+# Устанавливаем переменные окружения
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+WORKDIR /app
+
+# Копируем зависимости
+COPY requirements.txt .
+# Устанавливаем зависимости (используем psycopg2-binary, как у вас)
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# ВАЖНО: Копируем СОДЕРЖИМОЕ папки webapp (где manage.py) в /app
+# В контейнере будет /app/manage.py и /app/webapp/settings.py
+COPY webapp/ ./
+
+# Копируем tgapp, так как Django может его импортировать
+COPY tgapp ./tgapp
