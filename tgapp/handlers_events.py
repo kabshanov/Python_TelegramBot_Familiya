@@ -129,7 +129,7 @@ def fsm_cancel_callback(update: Update, context: CallbackContext) -> None:
 def start(update: Update, context: CallbackContext) -> None:
     """Краткая справка по командам."""
     user = update.effective_user
-    log.info("/start user_id=%s @%s", user.id, user.username)
+    log.info("/start user_id=%s @%s", getattr(user, "id", None), getattr(user, "username", ""))
     update.message.reply_text(
         "Календарь-бот.\n\n"
         "Регистрация:\n"
