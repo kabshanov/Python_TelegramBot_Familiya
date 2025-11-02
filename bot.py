@@ -6,7 +6,7 @@ bot.py
 
 Что делает:
 - корректно поднимает Django (DJANGO_SETTINGS_MODULE + django.setup);
-- (Task 5) гарантирует колонку is_public у таблицы events;
+- гарантирует колонку is_public у таблицы events;
 - создаёт Updater/Dispatcher (python-telegram-bot v13.x);
 - регистрирует все команды/хендлеры (события, встречи, публичность, экспорт);
 - настраивает меню команд;
