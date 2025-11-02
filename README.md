@@ -29,7 +29,7 @@
       * [Appointment](#appointment)
       * [BotStatistics](#botstatistics)
   * [10. Админ-панель](#10-админ-панель)
-  * [11. API (REST API - Задание №7)](#11-api-rest-api)
+  * [11. API (REST API](#11-api-rest-api)
       * [Эндпоинты](#эндпоинты)
       * [Пример запроса](#пример-запроса)
   * [12. Экспорт](#12-экспорт)
